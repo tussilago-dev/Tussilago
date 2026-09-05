@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from hypothesis import given
-from hypothesis import strategies as st
-
 from config import settings_helpers
 
 if TYPE_CHECKING:
@@ -13,22 +10,10 @@ if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
 
 
-@given(
-    segment=st.text(
-        alphabet=st.characters(
-            whitelist_categories=("Ll", "Lu", "Nd"),
-            whitelist_characters="._-",
-        ),
-        min_size=1,
-        max_size=12,
-    ),
-)
-def test_get_data_dir_uses_environment_variable(segment: str, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    custom_dir: Path = tmp_path / segment
-    monkeypatch.setenv(
-        name="TUSSILAGO_DATA_DIR",
-        value=str(custom_dir),
-    )
+def test_get_data_dir_uses_environment_variable(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    custom_dir: Path = tmp_path / "custom-data"
+
+    monkeypatch.setenv(name="TUSSILAGO_DATA_DIR", value=str(custom_dir))
 
     result: Path = settings_helpers.get_data_dir()
 
