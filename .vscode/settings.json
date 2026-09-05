@@ -1,9 +1,17 @@
 {
     "cSpell.words": [
+        "appauthor",
+        "appendonly",
+        "appname",
+        "delenv",
         "docstrings",
+        "dotenv",
+        "healthcheck",
         "Hellsén",
         "isort",
+        "isready",
         "Joakim",
+        "TheLovinator",
         "pydocstyle",
         "pytest",
         "tussilago"

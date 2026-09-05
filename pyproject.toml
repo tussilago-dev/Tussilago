@@ -3,17 +3,29 @@ name = "tussilago"
 version = "0.1.0"
 description = "Platform for hosting stuff and things."
 readme = "README.md"
+requires-python = ">=3.14"
 authors = [
     { name = "Joakim Hellsén", email = "tlovinator@gmail.com" }
 ]
-requires-python = ">=3.14"
 dependencies = [
+    "celery[redis]>=5.6.3",
     "django>=6.1",
+    "django-zeal>=2.2.4",
+    "gunicorn>=26.2.0",
+    "platformdirs>=4.11.5",
+    "psycopg-pool>=3.3.1",
+    "psycopg[binary]>=3.3.4",
+    "python-dotenv>=1.2.3",
 ]
 
 [dependency-groups]
 dev = [
+    "celery-types>=0.26.0",
+    "djlint>=1.44.2",
+    "hypothesis[django]>=6.167.1",
     "pytest-django>=4.14.0",
+    "pytest-randomly>=4.1.0",
+    "pytest-xdist[psutil]>=3.8.0",
 ]
 
 [tool.ruff]
@@ -22,12 +34,13 @@ unsafe-fixes = true
 fix = true
 line-length = 120
 
+lint.future-annotations = true
+lint.isort.force-single-line = true
+lint.isort.required-imports = ["from __future__ import annotations"]
+lint.pycodestyle.ignore-overlong-task-comments = true
+lint.pydocstyle.convention = "google"
 lint.select = ["ALL"]
 lint.unfixable = ["unused-variable"]
-lint.pydocstyle.convention = "google"
-lint.isort.required-imports = ["from __future__ import annotations"]
-lint.isort.force-single-line = true
-
 
 lint.ignore = [
     "missing-return-type-undocumented-public-function", # Checks that public functions and methods have return type annotations.
@@ -70,9 +83,15 @@ lint.ignore = [
     "tab-indentation",                           # Checks for indentation that uses tabs.
 ]
 
+format.docstring-code-format = true
+format.preview = true
+
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["assert", "undocumented-public-function", "magic-value-comparison", "import-private-name",]
 
 [tool.pytest]
 DJANGO_SETTINGS_MODULE = "config.settings"
 
+[tool.djlint]
+profile = "django"
+ignore = "H021,H030"
