@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Django",
+            "name": "Dashboard",
             "type": "debugpy",
             "request": "launch",
             "args": [
@@ -10,7 +10,8 @@
             ],
             "django": true,
             "autoStartBrowser": true,
-            "program": "${workspaceFolder}\\manage.py"
+            "cwd": "${workspaceFolder}/dashboard",
+            "program": "${workspaceFolder}/dashboard/manage.py"
         }
     ]
 }

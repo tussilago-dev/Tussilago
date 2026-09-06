@@ -1,12 +1,10 @@
 [project]
-name = "tussilago"
+name = "dashboard"
 version = "0.1.0"
-description = "Platform for hosting stuff and things."
+description = "Tussilago Dashboard"
 readme = "README.md"
 requires-python = ">=3.14"
-authors = [
-    { name = "Joakim Hellsén", email = "tlovinator@gmail.com" }
-]
+authors = [{ name = "Joakim Hellsén", email = "tlovinator@gmail.com" }]
 dependencies = [
     "celery[redis]>=5.6.3",
     "django>=6.1",
@@ -87,7 +85,12 @@ format.docstring-code-format = true
 format.preview = true
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["assert", "undocumented-public-function", "magic-value-comparison", "import-private-name",]
+"tests/*" = [
+    "assert",
+    "undocumented-public-function",
+    "magic-value-comparison",
+    "import-private-name",
+]
 
 [tool.pytest]
 DJANGO_SETTINGS_MODULE = "config.settings"
