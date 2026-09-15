@@ -27,3 +27,19 @@ This repo contains the following:
 - `infrastructure/`
   - Infrastructure-as-Code (IaC) for the Tussilago platform.
   - License is CC0.
+
+## Contributing
+
+Please refer to [CONTRIBUTING.md](CONTRIBUTING.md) if you want to contribute to the Tussilago project.
+
+## Security
+
+Please report any security vulnerabilities to the following email address:
+
+[security@tussilago.dev](mailto:security@tussilago.dev)
+
+Or via Discord: `TheLovinator#9276` (ID: 126462229892694018)
+
+## LLM Policy
+
+All code is written by humans and no AI-generated content is included.
