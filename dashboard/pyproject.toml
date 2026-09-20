@@ -7,7 +7,9 @@ requires-python = ">=3.14"
 authors = [{ name = "Joakim Hellsén", email = "tlovinator@gmail.com" }]
 dependencies = [
     "celery[redis]>=5.6.3",
+    "crispy-bootstrap5>=2026.9",
     "django>=6.1",
+    "django-allauth[idp-oidc,mfa,socialaccount]>=65.19.3",
     "django-zeal>=2.2.4",
     "gunicorn>=26.2.0",
     "platformdirs>=4.11.5",
@@ -61,6 +63,7 @@ lint.ignore = [
     "missing-todo-link",                                # Checks that a TODO comment is associated with a link to a relevant issue or ticket.
     "too-many-arguments",                               # Checks for function definitions that include too many arguments.
     "too-many-positional-arguments",                    # Checks for function definitions that include too many positional arguments.
+    "unused-method-argument",                           # Checks for the presence of unused arguments in instance method definitions.
 
     # Conflicting lint rules when using Ruff's formatter
     # https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules

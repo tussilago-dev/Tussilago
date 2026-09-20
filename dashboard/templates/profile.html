@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock title %}
+{% block content %}
+    <h1>Profile</h1>
+    <p>Your profile</p>
+    <ul>
+        <li>Username: {{ user.username|escape }}</li>
+        <li>First name: {{ user.first_name|escape }}</li>
+        <li>Last name: {{ user.last_name|escape }}</li>
+        <li>Is staff: {{ user.is_staff }}</li>
+        <li>Is superuser: {{ user.is_superuser }}</li>
+        <li>Email: {{ user.email|escape }}</li>
+        <li>Date joined: {{ user.date_joined|date:"Y-m-d H:i:s" }}</li>
+        <li>Last login: {{ user.last_login|date:"Y-m-d H:i:s" }}</li>
+        <li><a href="{% url 'account_email' %}">Emails</a></li>
+        <li><a href="{% url 'account_logout' %}">Logout</a></li>
+        <li><a href="{% url 'account_change_password' %}">Change Password</a></li>
+        <li><a href="{% url 'mfa_index' %}">Manage MFA</a></li>
+        <li><a href="{% url 'socialaccount_connections' %}">Manage Social Accounts</a></li>
+        <li><a href="{% url 'usersessions_list' %}">Manage Sessions</a></li>
+    </ul>
+{% endblock content %}

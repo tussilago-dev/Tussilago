@@ -215,3 +215,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+dashboard/private_key.pem

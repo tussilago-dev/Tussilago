@@ -1,0 +1,9 @@
+{% load allauth %}
+{% comment %} djlint:off {% endcomment %}
+<form method="{{ attrs.method }}"
+      {% if attrs.action %}action="{{ attrs.action }}"{% endif %}>
+  {% slot body %}
+  {% endslot %}
+  {% slot actions %}
+  {% endslot %}
+</form>

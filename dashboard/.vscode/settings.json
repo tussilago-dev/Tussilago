@@ -1,0 +1,26 @@
+{
+    "cSpell.words": [
+        "allauth",
+        "djlint",
+        "docstrings",
+        "dotenv",
+        "gunicorn",
+        "Hellsén",
+        "isort",
+        "Joakim",
+        "mypy",
+        "platformdirs",
+        "psutil",
+        "psycopg",
+        "pycodestyle",
+        "pydocstyle",
+        "pytest",
+        "socialaccount",
+        "totp",
+        "tussilago",
+        "webauthn",
+        "windowslive",
+        "xdist"
+    ],
+    "python.analysis.typeCheckingMode": "standard"
+}

@@ -1,0 +1,6 @@
+{% load allauth %}
+{% comment %} djlint:off {% endcomment %}
+<span class="badge text-bg-primary" {% if attrs.title %}title="{{ attrs.title }}"{% endif %}>
+    {% slot %}
+    {% endslot %}
+</span>

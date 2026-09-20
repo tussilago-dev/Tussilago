@@ -1,0 +1,7 @@
+{% load allauth %}
+{% comment %} djlint:off {% endcomment %}
+<div class="alert {% if 'success' in attrs.tags %}alert-success{% elif 'warning' in attrs.tags %}alert-warning{% elif 'danger' in attrs.tags or 'error' in attrs.tags %}alert-danger{% else %}alert-info{% endif %}"
+     role="alert">
+    {% slot message %}
+    {% endslot %}
+</div>

@@ -1,0 +1,10 @@
+{% load allauth %}
+{% comment %} djlint:off {% endcomment %}
+<details {% if attrs.open %}open{% endif %} class="text-danger">
+    <summary>
+        {% slot summary %}
+        {% endslot %}
+</summary>
+{% slot body %}
+{% endslot %}
+</details>

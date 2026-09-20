@@ -1,0 +1,24 @@
+{% load allauth %}
+{% if attrs.href %}
+    <div class="btn-wrapper mb-3">
+        <a href="{{ attrs.href }}"
+           {% if attrs.id %}id="{{ attrs.id }}"{% endif %}
+           {% if attrs.name %}name="{{ attrs.name }}"{% endif %}
+           class="btn {% if 'prominent' in attrs.tags %}btn-primary{% else %}btn-secondary{% endif %}">
+            {% slot %}
+{% endslot %}
+</a>
+</div>
+{% else %}
+<div class="btn-wrapper mb-3">
+    <button {% if attrs.form %}form="{{ attrs.form }}"{% endif %}
+            {% if attrs.id %}id="{{ attrs.id }}"{% endif %}
+            {% if attrs.name %}name="{{ attrs.name }}"{% endif %}
+            {% if attrs.value %}value="{{ attrs.value }}"{% endif %}
+            {% if attrs.type %}type="{{ attrs.type }}"{% endif %}
+            class="btn {% if 'prominent' in attrs.tags %}btn-primary{% else %}btn-secondary{% endif %}">
+        {% slot %}
+    {% endslot %}
+</button>
+</div>
+{% endif %}

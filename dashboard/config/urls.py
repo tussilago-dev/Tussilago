@@ -1,25 +1,34 @@
-"""URL configuration for config project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.1/topics/http/urls/
-
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
-
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from allauth.account.decorators import secure_admin_login
 from django.contrib import admin
+from django.urls import URLPattern
+from django.urls import URLResolver
+from django.urls import include
 from django.urls import path
 
-urlpatterns = [
-    path("admin/", admin.site.urls),
+from tussilago.views import index_view
+from tussilago.views import profile_view
+
+if TYPE_CHECKING:
+    from allauth.urls import URLPattern
+    from allauth.urls import URLResolver
+
+admin.autodiscover()
+
+# Require users to login before going to the Django admin site's login page
+# This ensures that the admin login page is protected by allauth ratelimiting.
+admin.site.login = secure_admin_login(admin.site.login)  # pyright: ignore[reportAttributeAccessIssue]
+
+
+urlpatterns: list[URLPattern | URLResolver] = [
+    path(route="", view=index_view, name="index"),
+    path("", include("allauth.idp.urls")),
+    path(route="admin/", view=admin.site.urls),
+    path(route="accounts/", view=include("allauth.urls")),
+    path(route="mfa/", view=include("allauth.mfa.urls")),
+    path(route="profile/", view=profile_view, name="profile"),
+    path("i18n/", include("django.conf.urls.i18n")),
 ]
