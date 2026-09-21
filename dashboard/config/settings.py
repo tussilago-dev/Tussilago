@@ -45,6 +45,7 @@ STATICFILES_DIRS: list[Path] = [BASE_DIR / "static"]
 ADMINS: list[tuple[str, str]] = [("Joakim Hellsén", "tlovinator@gmail.com")]
 MANAGERS: list[tuple[str, str]] = ADMINS
 
+AUTH_USER_MODEL = "tussilago.User"
 ACCOUNT_LOGIN_BY_CODE_ENABLED = True
 ACCOUNT_EMAIL_VERIFICATION = "mandatory"
 ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
@@ -80,6 +81,7 @@ INSTALLED_APPS: list[str] = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.humanize",
+    "tussilago.apps.TussilagoConfig",
     "allauth",
     "allauth.account",
     "allauth.socialaccount",

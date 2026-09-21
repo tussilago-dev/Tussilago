@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Organizations{% endblock title %}
+{% block content %}
+    <h1>Organizations</h1>
+    <p>Here you can see all the organizations you are a member of.</p>
+    <a class="btn btn-primary" href="{% url 'create_organization' %}">Create New Organization</a>
+    <hr>
+    {% if memberships %}
+        <p>You are a member of the following organization:</p>
+        <ul>
+            {% for membership in memberships %}
+                <li><a href="{% url 'organization_detail' membership.organization.id %}">{{ membership.organization.name|escape }}</a></li>
+                <li>Description: {{ membership.organization.description|escape }}</li>
+                <li>Created at: {{ membership.organization.created_at|date:"Y-m-d H:i:s" }}</li>
+                <li>Updated at: {{ membership.organization.updated_at|date:"Y-m-d H:i:s" }}</li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p>You are not a member of any organization.</p>
+    {% endif %}
+{% endblock content %}

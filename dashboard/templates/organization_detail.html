@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ organization.name|escape }}{% endblock title %}
+{% block content %}
+    <h1>{{ organization.name|escape }}</h1>
+    {{ organization.description|escape }}
+    <hr>
+    <ul>
+        <li>Created at: {{ organization.created_at|date:"Y-m-d H:i:s" }}</li>
+        <li>Updated at: {{ organization.updated_at|date:"Y-m-d H:i:s" }}</li>
+    </ul>
+{% endblock content %}

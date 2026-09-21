@@ -13,8 +13,8 @@
         <div class="collapse navbar-collapse" id="navbarToggler">
             <ul class="navbar-nav me-auto">
                 <li class="nav-item">
-                    <a class="nav-link {% if request.path == '/' %}active{% endif %}"
-                       href="{% url 'index' %}">Deploy</a>
+                    <a class="nav-link {% if request.path == '/organizations/' %}active{% endif %}"
+                       href="{% url 'organizations' %}">Organizations</a>
                 </li>
             </ul>
             <div class="d-flex align-items-center gap-3">
