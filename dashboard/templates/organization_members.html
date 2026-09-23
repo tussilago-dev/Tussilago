@@ -2,18 +2,63 @@
 {% load crispy_forms_tags %}
 {% block title %}{{ organization.name|escape }} - Members{% endblock title %}
 {% block content %}
-    <h1>{{ organization.name|escape }}</h1>
-    <h2>Members</h2>
-    <h2>Invite New Member</h2>
-    <form method="post">
-        {% csrf_token %}
-        {{ form|crispy }}
-        <button type="submit">Send Invitation</button>
-    </form>
-    <hr>
-    <ul>
-        {% for member in members %}
-            <li>{{ member.user.username|escape }} - {{ member.role|escape }}</li>
-        {% endfor %}
-    </ul>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="mb-1">{{ organization.name|escape }}</h1>
+            <p class="text-body-secondary mb-0">Organization members and invitations</p>
+        </div>
+    </div>
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Members</h2>
+                </div>
+                <ul class="list-group list-group-flush">
+                    {% for member in members %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>{{ member.user.username|escape }}</span>
+                            <span class="badge text-bg-secondary">{{ member.role|escape }}</span>
+                        </li>
+                    {% empty %}
+                        <li class="list-group-item text-body-secondary">No members.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Pending Invitations</h2>
+                </div>
+                <ul class="list-group list-group-flush">
+                    {% for invitation in pending_invitations %}
+                        <li class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-start gap-3">
+                                <div>
+                                    <div>{{ invitation.email|escape }}</div>
+                                    <small class="text-body-secondary">Invited by {{ invitation.invited_by.name|escape }}</small>
+                                </div>
+                                <small class="text-body-secondary text-nowrap">{{ invitation.created_at|date:"Y-m-d H:i" }}</small>
+                            </div>
+                        </li>
+                    {% empty %}
+                        <li class="list-group-item text-body-secondary">No pending invitations.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Invite Member</h2>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        {{ form|crispy }}
+                        <button class="btn btn-primary w-100" type="submit">Send Invitation</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
 {% endblock content %}

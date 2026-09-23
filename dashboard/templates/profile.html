@@ -1,22 +1,72 @@
 {% extends "base.html" %}
 {% block title %}Profile{% endblock title %}
 {% block content %}
-    <h1>Profile</h1>
-    <p>Your profile</p>
-    <ul>
-        <li>Username: {{ user.username|escape }}</li>
-        <li>First name: {{ user.first_name|escape }}</li>
-        <li>Last name: {{ user.last_name|escape }}</li>
-        <li>Is staff: {{ user.is_staff }}</li>
-        <li>Is superuser: {{ user.is_superuser }}</li>
-        <li>Email: {{ user.email|escape }}</li>
-        <li>Date joined: {{ user.date_joined|date:"Y-m-d H:i:s" }}</li>
-        <li>Last login: {{ user.last_login|date:"Y-m-d H:i:s" }}</li>
-        <li><a href="{% url 'account_email' %}">Emails</a></li>
-        <li><a href="{% url 'account_logout' %}">Logout</a></li>
-        <li><a href="{% url 'account_change_password' %}">Change Password</a></li>
-        <li><a href="{% url 'mfa_index' %}">Manage MFA</a></li>
-        <li><a href="{% url 'socialaccount_connections' %}">Manage Social Accounts</a></li>
-        <li><a href="{% url 'usersessions_list' %}">Manage Sessions</a></li>
-    </ul>
+    <div class="mb-4">
+        <h1 class="mb-1">Profile</h1>
+        <p class="text-body-secondary mb-0">Manage your account and security settings.</p>
+    </div>
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Account</h2>
+                </div>
+                <div class="card-body">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4">Username</dt>
+                        <dd class="col-sm-8">
+                            {{ user.username|escape }}
+                        </dd>
+                        <dt class="col-sm-4">Email</dt>
+                        <dd class="col-sm-8">
+                            {{ user.email|escape }}
+                        </dd>
+                        <dt class="col-sm-4">First name</dt>
+                        <dd class="col-sm-8">
+                            {{ user.first_name|escape }}
+                        </dd>
+                        <dt class="col-sm-4">Last name</dt>
+                        <dd class="col-sm-8">
+                            {{ user.last_name|escape }}
+                        </dd>
+                        <dt class="col-sm-4">Joined</dt>
+                        <dd class="col-sm-8">
+                            {{ user.date_joined|date:"Y-m-d H:i" }}
+                        </dd>
+                        <dt class="col-sm-4">Last login</dt>
+                        <dd class="col-sm-8 mb-0">
+                            {{ user.last_login|date:"Y-m-d H:i" }}
+                        </dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Security</h2>
+                </div>
+                <div class="list-group list-group-flush">
+                    <a class="list-group-item list-group-item-action"
+                       href="{% url 'account_change_password' %}">Change password</a>
+                    <a class="list-group-item list-group-item-action"
+                       href="{% url 'mfa_index' %}">Manage MFA</a>
+                    <a class="list-group-item list-group-item-action"
+                       href="{% url 'usersessions_list' %}">Manage sessions</a>
+                </div>
+            </div>
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Connected Accounts</h2>
+                </div>
+                <div class="list-group list-group-flush">
+                    <a class="list-group-item list-group-item-action"
+                       href="{% url 'account_email' %}">Email addresses</a>
+                    <a class="list-group-item list-group-item-action"
+                       href="{% url 'socialaccount_connections' %}">Social accounts</a>
+                </div>
+            </div>
+            <a class="btn btn-outline-danger" href="{% url 'account_logout' %}">Log out</a>
+        </div>
+    </div>
 {% endblock content %}

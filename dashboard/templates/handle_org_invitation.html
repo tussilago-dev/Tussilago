@@ -1,15 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Handle Organization Invitation{% endblock title %}
+{% block title %}Organization Invitation{% endblock title %}
 {% block content %}
-    <h1>Handle Organization Invitation</h1>
-    <p>You have been invited to join the organization: {{ invitation.organization.name|escape }}.</p>
-    <form method="post">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-success">Accept Invitation</button>
-    </form>
-    <form method="post"
-          action="{% url 'handle_org_invitation' invitation.token %}?decline=1">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-danger">Decline Invitation</button>
-    </form>
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="card">
+                <div class="card-body p-4 text-center">
+                    <h1 class="h3 mb-3">Organization Invitation</h1>
+                    <p class="mb-4">
+                        You have been invited to join
+                        <strong>{{ invitation.organization.name|escape }}</strong>.
+                    </p>
+                    <div class="d-flex justify-content-center gap-2">
+                        <form method="post"
+                              action="{% url 'accept_org_invitation' invitation.token %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-primary">Accept Invitation</button>
+                        </form>
+                        <form method="post"
+                              action="{% url 'decline_org_invitation' invitation.token %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline-danger">Decline Invitation</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 {% endblock content %}

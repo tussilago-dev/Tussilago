@@ -1,16 +1,54 @@
 {% extends "base.html" %}
 {% block title %}{{ organization.name|escape }}{% endblock title %}
 {% block content %}
-    <h1>{{ organization.name|escape }}</h1>
-    {{ organization.description|escape }}
-    <hr>
-    <p>
-        <a href="{% url 'organization_members' organization.id %}">View members</a>
-    </p>
-    <ul>
-        <li>Created at: {{ organization.created_at|date:"Y-m-d H:i:s" }}</li>
-        <li>Updated at: {{ organization.updated_at|date:"Y-m-d H:i:s" }}</li>
-        <li>Number of members: {{ organization.members.count }}</li>
-        <li>Number of invitations: {{ organization.invitations.count }}</li>
-    </ul>
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h1 class="mb-1">{{ organization.name|escape }}</h1>
+            {% if organization.description %}
+                <p class="text-body-secondary mb-0">{{ organization.description|escape }}</p>
+            {% endif %}
+        </div>
+        <a class="btn btn-outline-primary"
+           href="{% url 'organization_members' organization.id %}">Manage Members</a>
+    </div>
+    <div class="row g-4">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Overview</h2>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col">
+                            <div class="fs-3 fw-semibold">{{ organization.members.count }}</div>
+                            <div class="text-body-secondary">Members</div>
+                        </div>
+                        <div class="col">
+                            <div class="fs-3 fw-semibold">{{ organization.invitations.count }}</div>
+                            <div class="text-body-secondary">Invitations</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Details</h2>
+                </div>
+                <div class="card-body">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4">Created</dt>
+                        <dd class="col-sm-8">
+                            {{ organization.created_at|date:"Y-m-d H:i" }}
+                        </dd>
+                        <dt class="col-sm-4">Updated</dt>
+                        <dd class="col-sm-8 mb-0">
+                            {{ organization.updated_at|date:"Y-m-d H:i" }}
+                        </dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
 {% endblock content %}

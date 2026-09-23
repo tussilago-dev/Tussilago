@@ -1,21 +1,50 @@
 {% extends "base.html" %}
 {% block title %}Organizations{% endblock title %}
 {% block content %}
-    <h1>Organizations</h1>
-    <p>Here you can see all the organizations you are a member of.</p>
-    <a class="btn btn-primary" href="{% url 'create_organization' %}">Create New Organization</a>
-    <hr>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="mb-1">Organizations</h1>
+            <p class="text-body-secondary mb-0">Organizations you are a member of.</p>
+        </div>
+        <a class="btn btn-primary" href="{% url 'create_organization' %}">Create Organization</a>
+    </div>
     {% if memberships %}
-        <p>You are a member of the following organization:</p>
-        <ul>
+        <div class="row g-4">
             {% for membership in memberships %}
-                <li><a href="{% url 'organization_detail' membership.organization.id %}">{{ membership.organization.name|escape }}</a></li>
-                <li>Description: {{ membership.organization.description|escape }}</li>
-                <li>Created at: {{ membership.organization.created_at|date:"Y-m-d H:i:s" }}</li>
-                <li>Updated at: {{ membership.organization.updated_at|date:"Y-m-d H:i:s" }}</li>
+                <div class="col-md-6 col-xl-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h2 class="h5">
+                                <a class="text-decoration-none"
+                                   href="{% url 'organization_detail' membership.organization.id %}">
+                                    {{ membership.organization.name|escape }}
+                                </a>
+                            </h2>
+                            {% if membership.organization.description %}
+                                <p class="text-body-secondary">{{ membership.organization.description|escape }}</p>
+                            {% endif %}
+                        </div>
+                        <div class="card-footer text-body-secondary small">
+                            <div>
+                                Created
+                                {{ membership.organization.created_at|date:"Y-m-d H:i" }}
+                            </div>
+                            <div>
+                                Updated
+                                {{ membership.organization.updated_at|date:"Y-m-d H:i" }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             {% endfor %}
-        </ul>
+        </div>
     {% else %}
-        <p>You are not a member of any organization.</p>
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <h2 class="h5">No organizations</h2>
+                <p class="text-body-secondary">You are not a member of any organization yet.</p>
+                <a class="btn btn-primary" href="{% url 'create_organization' %}">Create Organization</a>
+            </div>
+        </div>
     {% endif %}
 {% endblock content %}

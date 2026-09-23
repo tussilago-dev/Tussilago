@@ -1,11 +1,25 @@
 {% extends "base.html" %}
 {% load crispy_forms_tags %}
-{% block title %}Organizations{% endblock title %}
+{% block title %}Create Organization{% endblock title %}
 {% block content %}
-    <h1>Create Organization</h1>
-    <form method="post">
-        {% csrf_token %}
-        {{ form|crispy }}
-        <button type="submit" class="btn btn-primary">Create Organization</button>
-    </form>
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="card">
+                <div class="card-header">
+                    <h1 class="h5 mb-0">Create Organization</h1>
+                </div>
+                <div class="card-body">
+                    <p class="text-body-secondary mb-4">Create an organization to manage applications and members.</p>
+                    <form method="post">
+                        {% csrf_token %}
+                        {{ form|crispy }}
+                        <div class="d-flex justify-content-end gap-2">
+                            <a class="btn btn-outline-secondary" href="{% url 'organizations' %}">Cancel</a>
+                            <button type="submit" class="btn btn-primary">Create Organization</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
 {% endblock content %}

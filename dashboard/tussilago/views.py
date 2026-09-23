@@ -97,6 +97,7 @@ class OrganizationMembersView(OrganizationAccessMixin, FormMixin, DetailView):
     def get_context_data(self, **kwargs: str) -> dict[str, Any]:
         context: dict[str, Any] = super().get_context_data(**kwargs)
         context["members"] = OrganizationMember.objects.filter(organization=self.object)
+        context["pending_invitations"] = OrganizationInvitation.objects.filter(organization=self.object)
         context.setdefault("form", self.get_form())
         return context
 
