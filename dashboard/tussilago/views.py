@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from typing import Any
 from typing import cast
 
 from allauth.account.models import EmailAddress
 from django.contrib import messages
-from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from django.shortcuts import redirect
-from django.urls import reverse_lazy
-from django.views import View
-from django.views.generic import DetailView
-from django.views.generic import FormView
-from django.views.generic import ListView
-from django.views.generic import TemplateView
-from django.views.generic.edit import FormMixin
+from django.shortcuts import render
+from django.views.decorators.http import require_POST
 
 from tussilago.forms import CreateOrganizationForm
 from tussilago.forms import InviteToOrganizationForm
@@ -26,184 +21,170 @@ from tussilago.models import OrganizationMember
 from tussilago.models import User
 
 if TYPE_CHECKING:
-    from django.db.models import QuerySet
+    from django.db.models.manager import BaseManager
     from django.http import HttpRequest
     from django.http.response import HttpResponse
 
 
-class OrganizationAccessMixin(LoginRequiredMixin, View):
-    """Restricts access to organizations the current user belongs to."""
+# MARK: Helpers
+def _get_user_organization(user: User, organization_id: int) -> Organization:
+    """Fetch an organization the user belongs to, or raise a 404."""
+    return get_object_or_404(Organization, pk=organization_id, members__user=user)
 
-    pk_url_kwarg: str = "organization_id"
 
-    def get_queryset(self) -> QuerySet[Organization]:
-        # Users can only query organizations they are a member of
-        return Organization.objects.filter(members__user=self.request.user)
+def _get_valid_invitation(user: User, token: str) -> OrganizationInvitation:
+    """Validate and return an unaccepted invitation addressed to the current user.
+
+    Raises:
+        Http404: If the invitation does not exist or has already been accepted.
+        PermissionDenied: If the user lacks a verified email or the invitation email differs.
+    """  # ruff: ignore[docstring-extraneous-exception]
+    invitation: OrganizationInvitation = get_object_or_404(OrganizationInvitation, token=token, is_accepted=False)
+
+    has_verified_email: bool = EmailAddress.objects.filter(user=user, email=user.email, verified=True).exists()
+    if not has_verified_email:
+        msg = "You must have a verified email address to accept this invitation."
+        raise PermissionDenied(msg)
+
+    if invitation.email.casefold() != user.email.casefold():
+        msg = "This invitation was sent to a different email address."
+        raise PermissionDenied(msg)
+
+    return invitation
 
 
 # MARK: Index
-class IndexView(TemplateView):
-    template_name = "index.html"
+def index(request: HttpRequest) -> HttpResponse:
+    """Render the index page."""
+    return render(request, "index.html")
 
 
 # MARK: Profile
-class ProfileView(LoginRequiredMixin, TemplateView):
-    template_name = "profile.html"
+@login_required
+def profile(request: HttpRequest) -> HttpResponse:
+    """Render the profile page."""
+    return render(request, "profile.html")
 
 
 # MARK: Organizations
-class OrganizationsView(LoginRequiredMixin, ListView):
-    template_name = "organizations.html"
-    context_object_name = "memberships"
+@login_required
+def organizations(request: HttpRequest) -> HttpResponse:
+    """Render the organizations page with the user's memberships."""
+    memberships: BaseManager = (
+        OrganizationMember.objects
+        .filter(user=request.user)
+        .select_related("organization")
+        .order_by("organization__name")
+    )
+    return render(request, "organizations.html", {"memberships": memberships})
 
-    def get_queryset(self) -> QuerySet[OrganizationMember]:
-        return (
-            OrganizationMember.objects
-            .filter(user=self.request.user)
-            .select_related("organization")
-            .order_by("organization__name")
-        )
+
+# MARK: Org details & update
+@login_required
+def organization_detail(request: HttpRequest, organization_id: int) -> HttpResponse:
+    """Render the detail page for a specific organization."""
+    user: User = cast("User", request.user)
+    organization: Organization = _get_user_organization(user, organization_id)
+    return render(request, "organization_detail.html", {"organization": organization})
 
 
-# MARK: Org details
-class OrganizationDetailView(OrganizationAccessMixin, DetailView):
-    model = Organization
-    template_name = "organization_detail.html"
-    context_object_name = "organization"
+@login_required
+def organization_update(request: HttpRequest, organization_id: int) -> HttpResponse:
+    """Handle updating an organization's details."""
+    user: User = cast("User", request.user)
+    organization: Organization = _get_user_organization(user, organization_id)
+
+    if request.method == "POST":
+        form = CreateOrganizationForm(request.POST)
+        if form.is_valid():
+            organization.name = form.cleaned_data["name"]
+            organization.save()
+            messages.success(request, "Organization updated successfully.")
+            return redirect("organization_detail", organization_id=organization.id)
+    else:
+        form = CreateOrganizationForm(initial={"name": organization.name})
+
+    return render(
+        request,
+        "organization_update.html",
+        {"organization": organization, "form": form},
+    )
 
 
 # MARK: Org members
-class OrganizationMembersView(OrganizationAccessMixin, FormMixin, DetailView):
-    model = Organization
-    template_name = "organization_members.html"
-    context_object_name = "organization"
-    form_class = InviteToOrganizationForm
-    object: Organization
+@login_required
+def organization_members(request: HttpRequest, organization_id: int) -> HttpResponse:
+    """Render the members page for a specific organization and handle invitations."""
+    user: User = cast("User", request.user)
+    organization: Organization = _get_user_organization(user, organization_id)
 
-    def get_success_url(self) -> str:
-        return reverse_lazy("organization_members", kwargs={"organization_id": self.object.id})
-
-    def get_object(self, queryset: QuerySet[Organization] | None = None) -> Organization:
-        return cast("Organization", super().get_object(queryset))
-
-    def form_valid(self, form: InviteToOrganizationForm) -> HttpResponse:
-        messages.success(self.request, "Invitation sent successfully.")
-        return super().form_valid(form)
-
-    def form_invalid(self, form: InviteToOrganizationForm) -> HttpResponse:
-        messages.error(self.request, "Failed to send invitation.")
-        return super().form_invalid(form)
-
-    def get_context_data(self, **kwargs: str) -> dict[str, Any]:
-        context: dict[str, Any] = super().get_context_data(**kwargs)
-        context["members"] = OrganizationMember.objects.filter(organization=self.object)
-        context["pending_invitations"] = OrganizationInvitation.objects.filter(organization=self.object)
-        context.setdefault("form", self.get_form())
-        return context
-
-    def post(self, request: HttpRequest, *args: str, **kwargs: str) -> HttpResponse:
-        self.object = self.get_object()
-        form: InviteToOrganizationForm = self.get_form()  # pyright: ignore[reportAssignmentType]
+    if request.method == "POST":
+        form = InviteToOrganizationForm(request.POST)
         if form.is_valid():
-            form.save(request, self.object)
-            return self.form_valid(form)
-        return self.form_invalid(form)
+            form.save(request, organization)
+            messages.success(request, "Invitation sent successfully.")
+            return redirect("organization_members", organization_id=organization.id)
+        messages.error(request, "Failed to send invitation.")
+    else:
+        form = InviteToOrganizationForm()
+
+    context: dict[str, Organization | InviteToOrganizationForm | BaseManager] = {
+        "organization": organization,
+        "form": form,
+        "members": OrganizationMember.objects.filter(organization=organization),
+        "pending_invitations": OrganizationInvitation.objects.filter(organization=organization),
+    }
+    return render(request, "organization_members.html", context)
 
 
 # MARK: Org creation
-class CreateOrganizationView(LoginRequiredMixin, FormView):
-    form_class = CreateOrganizationForm
-    template_name = "create_organization.html"
-    success_url = reverse_lazy("organizations")
+@login_required
+def create_organization(request: HttpRequest) -> HttpResponse:
+    """Handle the creation of a new organization."""
+    user: User = cast("User", request.user)
 
-    def form_valid(self, form: CreateOrganizationForm) -> HttpResponse:
-        if not isinstance(self.request.user, User):
-            msg = "You must be signed in to accept this invitation."
-            raise PermissionDenied(msg)
+    if request.method == "POST":
+        form = CreateOrganizationForm(request.POST)
+        if form.is_valid():
+            with transaction.atomic():
+                form.save(request, user)
+            messages.success(request, "Organization created successfully.")
+            return redirect("organizations")
+    else:
+        form = CreateOrganizationForm()
 
-        with transaction.atomic():
-            form.save(self.request, self.request.user)
-
-        messages.success(self.request, "Organization created successfully.")
-        return redirect(self.get_success_url())
+    return render(request, "create_organization.html", {"form": form})
 
 
 # MARK: Org invitations
-class OrganizationInvitationView(LoginRequiredMixin, DetailView):
-    model = OrganizationInvitation
-    slug_field = "token"
-    slug_url_kwarg = "token"
-    template_name = "handle_org_invitation.html"
-    context_object_name = "invitation"
+@login_required
+def organization_invitation(request: HttpRequest, token: str) -> HttpResponse:
+    """Render the page to handle an organization invitation."""
+    user: User = cast("User", request.user)
+    invitation: OrganizationInvitation = _get_valid_invitation(user, token)
 
-    def get_queryset(self) -> QuerySet[OrganizationInvitation]:
-        return OrganizationInvitation.objects.filter(is_accepted=False)
-
-    def get_object(self, queryset: QuerySet[OrganizationInvitation] | None = None) -> OrganizationInvitation:
-        invitation: OrganizationInvitation = super().get_object(queryset)  # pyright: ignore[reportAssignmentType]
-
-        # Validate that the user is signed in.
-        if not isinstance(self.request.user, User):
-            msg = "You must be signed in to accept this invitation."
-            raise PermissionDenied(msg)
-
-        # Validate that the user's email is verified.
-        user: User = self.request.user
-        email: str = self.request.user.email
-        self.validate_user_email_verification(user=user, email=email)
-
-        # Validate that the invitation email matches the user's email.
-        self.validate_invitation_email(invitation_email=invitation.email, user_email=self.request.user.email)
-
-        return invitation
-
-    def validate_invitation_email(self, invitation_email: str, user_email: str) -> None:
-        """Validates that the invitation email matches the user's email in a case-insensitive manner.
-
-        Args:
-            invitation_email (str): The email address on the invitation.
-            user_email (str): The email address of the user.
-
-        Raises:
-            PermissionDenied: If the invitation email does not match the user's email.
-        """
-        if invitation_email.casefold() != user_email.casefold():
-            msg = "This invitation was sent to a different email address."
-            raise PermissionDenied(msg)
-
-    def validate_user_email_verification(self, user: User, email: str) -> None:
-        """Validates that the user has a verified email address.
-
-        Args:
-            user (User): The user instance to validate.
-            email (str): The email address of the user.
-
-        Raises:
-            PermissionDenied: If the user is not signed in.
-            PermissionDenied: If the user does not have a verified email address.
-        """
-        email_address: EmailAddress | None = EmailAddress.objects.filter(user=user, email=email, verified=True).first()
-        if not email_address:
-            msg = "You must have a verified email address to accept this invitation."
-            raise PermissionDenied(msg)
+    return render(request, "handle_org_invitation.html", {"invitation": invitation})
 
 
-class AcceptOrganizationInvitationView(OrganizationInvitationView):
-    def post(self, request: HttpRequest, *args: str, **kwargs: str) -> HttpResponse:
-        invitation: OrganizationInvitation = self.get_object()
+@login_required
+@require_POST
+def accept_organization_invitation(request: HttpRequest, token: str) -> HttpResponse:
+    """Handle accepting an organization invitation."""
+    user: User = cast("User", request.user)
+    invitation: OrganizationInvitation = _get_valid_invitation(user, token)
+    invitation.accept(user)
 
-        user: User = cast("User", request.user)
-        invitation.accept(user)
-
-        messages.success(request, f"Joined {invitation.organization.name}.")
-        return redirect("organization_detail", organization_id=invitation.organization.id)
+    messages.success(request, f"Joined {invitation.organization.name}.")
+    return redirect("organization_detail", organization_id=invitation.organization.id)
 
 
-class DeclineOrganizationInvitationView(OrganizationInvitationView):
-    def post(self, request: HttpRequest, *args: str, **kwargs: str) -> HttpResponse:
-        invitation: OrganizationInvitation = self.get_object()
-        invitation.decline()
+@login_required
+@require_POST
+def decline_organization_invitation(request: HttpRequest, token: str) -> HttpResponse:
+    """Handle declining an organization invitation."""
+    user: User = cast("User", request.user)
+    invitation: OrganizationInvitation = _get_valid_invitation(user, token)
+    invitation.decline()
 
-        messages.info(request, f"Declined invitation to {invitation.organization.name}.")
-
-        return redirect("organizations")
+    messages.info(request, f"Declined invitation to {invitation.organization.name}.")
+    return redirect("organizations")

@@ -7,15 +7,15 @@ from django.urls import URLResolver
 from django.urls import include
 from django.urls import path
 
-from tussilago.views import AcceptOrganizationInvitationView
-from tussilago.views import CreateOrganizationView
-from tussilago.views import DeclineOrganizationInvitationView
-from tussilago.views import IndexView
-from tussilago.views import OrganizationDetailView
-from tussilago.views import OrganizationInvitationView
-from tussilago.views import OrganizationMembersView
-from tussilago.views import OrganizationsView
-from tussilago.views import ProfileView
+from tussilago.views import accept_organization_invitation
+from tussilago.views import create_organization
+from tussilago.views import decline_organization_invitation
+from tussilago.views import index
+from tussilago.views import organization_detail
+from tussilago.views import organization_invitation
+from tussilago.views import organization_members
+from tussilago.views import organizations
+from tussilago.views import profile
 
 admin.autodiscover()
 
@@ -28,7 +28,7 @@ urlpatterns: list[URLPattern | URLResolver] = [
     # /
     path(
         route="",
-        view=IndexView.as_view(),
+        view=index,
         name="index",
     ),
     # /admin/
@@ -49,49 +49,49 @@ urlpatterns: list[URLPattern | URLResolver] = [
     # /profile/
     path(
         route="profile/",
-        view=ProfileView.as_view(),
+        view=profile,
         name="profile",
     ),
     # /organizations/
     path(
         route="organizations/",
-        view=OrganizationsView.as_view(),
+        view=organizations,
         name="organizations",
     ),
     # /organizations/create/
     path(
         route="organizations/create/",
-        view=CreateOrganizationView.as_view(),
+        view=create_organization,
         name="create_organization",
     ),
     # /organizations/<uuid:organization_id>/
     path(
         route="organizations/<uuid:organization_id>/",
-        view=OrganizationDetailView.as_view(),
+        view=organization_detail,
         name="organization_detail",
     ),
     # /organizations/<uuid:organization_id>/members/
     path(
         route="organizations/<uuid:organization_id>/members/",
-        view=OrganizationMembersView.as_view(),
+        view=organization_members,
         name="organization_members",
     ),
     # /invitations/<str:token>/
     path(
         route="invitations/<str:token>/",
-        view=OrganizationInvitationView.as_view(),
+        view=organization_invitation,
         name="handle_org_invitation",
     ),
     # /invitations/<str:token>/accept/
     path(
         route="invitations/<str:token>/accept/",
-        view=AcceptOrganizationInvitationView.as_view(),
+        view=accept_organization_invitation,
         name="accept_org_invitation",
     ),
     # /invitations/<str:token>/decline/
     path(
         route="invitations/<str:token>/decline/",
-        view=DeclineOrganizationInvitationView.as_view(),
+        view=decline_organization_invitation,
         name="decline_org_invitation",
     ),
     # /i18n/
