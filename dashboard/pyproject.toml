@@ -32,10 +32,11 @@ preview = true
 unsafe-fixes = true
 fix = true
 line-length = 120
+format.docstring-code-format = true
+format.preview = true
 
 lint.future-annotations = true
 lint.isort.force-single-line = true
-lint.isort.required-imports = ["from __future__ import annotations"]
 lint.pycodestyle.ignore-overlong-task-comments = true
 lint.pydocstyle.convention = "google"
 lint.select = ["ALL"]
@@ -84,12 +85,9 @@ lint.ignore = [
     "tab-indentation",                           # Checks for indentation that uses tabs.
 ]
 
-format.docstring-code-format = true
-format.preview = true
-
 [tool.ruff.lint.per-file-ignores]
 
-"**/migrations/**" = ["RUF012", "E501"]
+"**/migrations/**" = ["mutable-class-default", "line-too-long"]
 
 "tests/*" = [
     "assert",

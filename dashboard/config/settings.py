@@ -14,7 +14,6 @@ logger: logging.Logger = logging.getLogger("tussilago.settings")
 
 load_dotenv(verbose=True)
 
-
 BASE_DIR: Path = Path(__file__).resolve().parent.parent
 DATA_DIR: Path = get_data_dir()
 
@@ -162,18 +161,15 @@ EMAIL_USE_LOCALTIME: bool = True
 SERVER_EMAIL: str | None = os.getenv(key="EMAIL_HOST_USER", default=None)
 
 
-# If DEBUG is True, use the console email backend instead of sending real emails
-mail_backend = "django.core.mail.backends.smtp.EmailBackend"
-if DEBUG:
-    mail_backend = "django.core.mail.backends.console.EmailBackend"
-
 MAILERS: dict[str, dict[str, Any]] = {
     "default": {
-        "BACKEND": mail_backend,
+        "BACKEND": "django.core.mail.backends.console.EmailBackend",
     },
 }
 
-if not DEBUG:
+USE_CONSOLE_EMAIL_BACKEND: bool = os.getenv(key="USE_CONSOLE_EMAIL_BACKEND", default="True").lower() == "true"
+if not USE_CONSOLE_EMAIL_BACKEND:
+    MAILERS["default"]["BACKEND"] = "django.core.mail.backends.smtp.EmailBackend"
     MAILERS["default"]["OPTIONS"] = {
         "host": os.getenv("EMAIL_HOST", "smtp.gmail.com"),
         "use_tls": os.getenv("EMAIL_USE_TLS", "True").lower() == "true",
@@ -182,7 +178,7 @@ if not DEBUG:
         "timeout": int(os.getenv("EMAIL_TIMEOUT", "5")),
     }
 
-MESSAGE_TAGS = {
+MESSAGE_TAGS: dict[int, str] = {
     messages.DEBUG: "alert-info",
     messages.INFO: "alert-info",
     messages.SUCCESS: "alert-success",

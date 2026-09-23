@@ -7,11 +7,15 @@ from django.urls import URLResolver
 from django.urls import include
 from django.urls import path
 
-from tussilago.views import create_organization
-from tussilago.views import index_view
-from tussilago.views import organization_detail
-from tussilago.views import organizations
-from tussilago.views import profile_view
+from tussilago.views import AcceptOrganizationInvitationView
+from tussilago.views import CreateOrganizationView
+from tussilago.views import DeclineOrganizationInvitationView
+from tussilago.views import IndexView
+from tussilago.views import OrganizationDetailView
+from tussilago.views import OrganizationInvitationView
+from tussilago.views import OrganizationMembersView
+from tussilago.views import OrganizationsView
+from tussilago.views import ProfileView
 
 admin.autodiscover()
 
@@ -21,14 +25,78 @@ admin.site.login = secure_admin_login(admin.site.login)  # pyright: ignore[repor
 
 
 urlpatterns: list[URLPattern | URLResolver] = [
-    path(route="", view=index_view, name="index"),
-    path("", include("allauth.idp.urls")),
-    path(route="admin/", view=admin.site.urls),
-    path(route="accounts/", view=include("allauth.urls")),
-    path(route="mfa/", view=include("allauth.mfa.urls")),
-    path(route="profile/", view=profile_view, name="profile"),
-    path(route="organizations/", view=organizations, name="organizations"),
-    path(route="organizations/create/", view=create_organization, name="create_organization"),
-    path(route="organizations/<uuid:organization_id>/", view=organization_detail, name="organization_detail"),
-    path("i18n/", include("django.conf.urls.i18n")),
+    # /
+    path(
+        route="",
+        view=IndexView.as_view(),
+        name="index",
+    ),
+    # /admin/
+    path(
+        route="admin/",
+        view=admin.site.urls,
+    ),
+    # /accounts/
+    path(
+        route="accounts/",
+        view=include("allauth.urls"),
+    ),
+    # /mfa/
+    path(
+        route="mfa/",
+        view=include("allauth.mfa.urls"),
+    ),
+    # /profile/
+    path(
+        route="profile/",
+        view=ProfileView.as_view(),
+        name="profile",
+    ),
+    # /organizations/
+    path(
+        route="organizations/",
+        view=OrganizationsView.as_view(),
+        name="organizations",
+    ),
+    # /organizations/create/
+    path(
+        route="organizations/create/",
+        view=CreateOrganizationView.as_view(),
+        name="create_organization",
+    ),
+    # /organizations/<uuid:organization_id>/
+    path(
+        route="organizations/<uuid:organization_id>/",
+        view=OrganizationDetailView.as_view(),
+        name="organization_detail",
+    ),
+    # /organizations/<uuid:organization_id>/members/
+    path(
+        route="organizations/<uuid:organization_id>/members/",
+        view=OrganizationMembersView.as_view(),
+        name="organization_members",
+    ),
+    # /invitations/<str:token>/
+    path(
+        route="invitations/<str:token>/",
+        view=OrganizationInvitationView.as_view(),
+        name="handle_org_invitation",
+    ),
+    # /invitations/<str:token>/accept/
+    path(
+        route="invitations/<str:token>/accept/",
+        view=AcceptOrganizationInvitationView.as_view(),
+        name="accept_org_invitation",
+    ),
+    # /invitations/<str:token>/decline/
+    path(
+        route="invitations/<str:token>/decline/",
+        view=DeclineOrganizationInvitationView.as_view(),
+        name="decline_org_invitation",
+    ),
+    # /i18n/
+    path(
+        route="i18n/",
+        view=include("django.conf.urls.i18n"),
+    ),
 ]

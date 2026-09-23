@@ -18,6 +18,7 @@
         "socialaccount",
         "totp",
         "tussilago",
+        "usersessions",
         "webauthn",
         "windowslive",
         "xdist"

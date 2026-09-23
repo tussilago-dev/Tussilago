@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Handle Organization Invitation{% endblock title %}
+{% block content %}
+    <h1>Handle Organization Invitation</h1>
+    <p>You have been invited to join the organization: {{ invitation.organization.name|escape }}.</p>
+    <form method="post">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-success">Accept Invitation</button>
+    </form>
+    <form method="post"
+          action="{% url 'handle_org_invitation' invitation.token %}?decline=1">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">Decline Invitation</button>
+    </form>
+{% endblock content %}
