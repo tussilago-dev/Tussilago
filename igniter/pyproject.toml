@@ -1,0 +1,86 @@
+[project]
+name = "igniter"
+version = "0.1.0"
+description = "A Python package for installing and managing Firecracker microVMs."
+readme = "README.md"
+authors = [{ name = "Joakim Hellsén", email = "tlovinator@gmail.com" }]
+requires-python = ">=3.14"
+dependencies = [
+    "litestar[standard]>=2.24.0",
+    "niquests>=3.21.2",
+    "platformdirs>=4.12.1",
+]
+
+[project.scripts]
+igniter = "igniter:main"
+
+[build-system]
+requires = ["uv_build>=0.12.2,<0.13.0"]
+build-backend = "uv_build"
+
+
+[tool.ruff]
+preview = true
+unsafe-fixes = true
+fix = true
+line-length = 120
+format.docstring-code-format = true
+format.preview = true
+
+lint.future-annotations = true
+lint.isort.force-single-line = true
+lint.pycodestyle.ignore-overlong-task-comments = true
+lint.pydocstyle.convention = "google"
+lint.select = ["ALL"]
+lint.unfixable = ["unused-variable"]
+
+lint.ignore = [
+    "missing-return-type-undocumented-public-function", # Checks that public functions and methods have return type annotations.
+    "unused-function-argument",                         # Checks for the presence of unused arguments in function definitions.
+    "function-call-in-default-argument",                # Allow Form() as a default value
+    "missing-copyright-notice",                         # Missing copyright notice at top of file
+    "undocumented-public-module",                       # Checks for undocumented public module definitions.
+    "undocumented-public-class",                        # Checks for undocumented public class definitions.
+    "undocumented-public-method",                       # Checks for undocumented public method definitions.
+    "undocumented-public-package",                      # Missing docstring in public package.
+    "undocumented-magic-method",                        # Missing docstring in magic method.
+    "undocumented-magic-method",                        # pydocstyle - missing docstring in magic method
+    "undocumented-public-nested-class",                 # Checks for undocumented public class definitions, for nested classes.
+    "commented-out-code",                               # Found commented-out code
+    "boolean-positional-value-in-call",                 # Checks for boolean positional arguments in function calls.
+    "line-contains-todo",                               # Line contains TODO
+    "logging-percent-format",                           # Allow % in logging
+    "blanket-type-ignore",                              # Check for type: ignore annotations that suppress all type warnings, as opposed to targeting specific type warnings.
+    "no-self-use",                                      # Checks for the presence of unused self parameter in methods definitions.
+    "unused-async",                                     # Checks for functions declared async that do not await or otherwise use features requiring the function to be declared async.
+    "missing-todo-link",                                # Checks that a TODO comment is associated with a link to a relevant issue or ticket.
+    "too-many-arguments",                               # Checks for function definitions that include too many arguments.
+    "too-many-positional-arguments",                    # Checks for function definitions that include too many positional arguments.
+    "unused-method-argument",                           # Checks for the presence of unused arguments in instance method definitions.
+    "docstring-missing-returns",                        # Checks for functions with return statements that do not have "Returns" sections in their docstrings.
+
+    # Conflicting lint rules when using Ruff's formatter
+    # https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
+    "missing-trailing-comma",                    # Checks for the absence of trailing commas.
+    "prohibited-trailing-comma",                 # Checks for the presence of prohibited trailing commas.
+    "docstring-tab-indentation",                 # Checks for docstrings that are indented with tabs.
+    "triple-single-quotes",                      # Checks for docstrings that use '''triple single quotes''' instead of """triple double quotes""".
+    "indentation-with-invalid-multiple",         # Checks for indentation with a non-multiple of 4 spaces.
+    "indentation-with-invalid-multiple-comment", # Checks for indentation of comments with a non-multiple of 4 spaces.
+    "over-indented",                             # Checks for over-indented code.
+    "single-line-implicit-string-concatenation", # Checks for implicitly concatenated strings on a single line.
+    "multi-line-implicit-string-concatenation",  # Checks for implicitly concatenated strings that span multiple lines.
+    "bad-quotes-inline-string",                  # Checks for inline strings that use single quotes or double quotes, depending on the value of the lint.flake8-quotes.inline-quotes option.
+    "bad-quotes-multiline-string",               # Checks for multiline strings that use single quotes or double quotes, depending on the value of the lint.flake8-quotes.multiline-quotes setting.
+    "bad-quotes-docstring",                      # Checks for docstrings that use single quotes or double quotes, depending on the value of the lint.flake8-quotes.docstring-quotes setting.
+    "avoidable-escaped-quote",                   # Checks for strings that include escaped quotes, and suggests changing the quote style to avoid the need to escape them.
+    "tab-indentation",                           # Checks for indentation that uses tabs.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "assert",
+    "undocumented-public-function",
+    "magic-value-comparison",
+    "import-private-name",
+]
