@@ -10,6 +10,7 @@ from typing import IO
 from typing import TYPE_CHECKING
 from typing import Any
 
+import httpx
 import niquests
 from litestar import Litestar
 from litestar import get
@@ -18,10 +19,14 @@ from platformdirs import site_bin_path
 from platformdirs import site_cache_path
 from platformdirs import site_data_path
 
+from igniter.firecracker import download_linux_kernel
+
 if TYPE_CHECKING:
+    import pathlib
     from _hashlib import HASH
 
 # TODO(TheLovinator): Add support for Aarch64
+# TODO(TheLovinator): Install to /opt/tussilago/firecracker/<version> and create symlinks
 
 
 if os.name != "posix":
@@ -33,22 +38,23 @@ if os.geteuid() != 0:
     msg = "This script must be run as root."
     raise PermissionError(msg)
 
-cache_location: Path = site_cache_path(appname="Tussilago", appauthor=False, ensure_exists=True)
-site_data_location: Path = site_data_path(appname="Tussilago", appauthor=False, ensure_exists=True)
+cache_location: pathlib.Path = site_cache_path(appname="Tussilago", appauthor=False, ensure_exists=True)
+site_data_location: pathlib.Path = site_data_path(appname="Tussilago", appauthor=False, ensure_exists=True)
 install_dir: Path = site_bin_path()
 
 logger: logging.Logger = logging.getLogger("tussilago")
 
 
-def fetch_latest_firecracker_release() -> tuple[str, str, str] | None:
+async def fetch_latest_firecracker_release() -> tuple[str, str, str] | None:
     """Fetch the latest Firecracker release from GitHub.
 
     Returns:
         tuple[str, str, str] | None: Version, download URL, and expected hash.
     """
     url = "https://api.github.com/repos/firecracker-microvm/firecracker/releases/latest"
-    r: niquests.Response = niquests.get(url)
-    r.raise_for_status()
+    async with httpx.AsyncClient() as client:
+        r: httpx.Response = await client.get(url)
+        r.raise_for_status()
 
     json_data: dict[str, Any] = r.json()
     assets: list[dict[str, Any]] = json_data.get("assets", [])
@@ -72,27 +78,27 @@ def fetch_latest_firecracker_release() -> tuple[str, str, str] | None:
     return None
 
 
-def download_binary() -> str:
+async def download_binary() -> str:
     """Download the Firecracker and Jailer binary to /usr/bin/.
 
     Raises:
         RuntimeError: If the checksum does not match.
     """
-    release: tuple[str, str, str] | None = fetch_latest_firecracker_release()
+    release: tuple[str, str, str] | None = await fetch_latest_firecracker_release()
     if release is None:
         return "No new version available."
 
     version, url, expected_hash = release
     logger.info("Downloading Firecracker v%s from %s", version, url)
 
-    response: niquests.Response = niquests.get(url, stream=True)
+    response: niquests.AsyncResponse = await niquests.aget(url, stream=True)
     response.raise_for_status()
 
     tar_stream = io.BytesIO()
     hasher: HASH = hashlib.sha256()
     logger.info("Calculating checksum and writing to tar stream...")
 
-    for chunk in response.iter_content(1024 * 1024):
+    for chunk in response.ait_iter_bytes(chunk_size=8192):
         if chunk:
             hasher.update(chunk)
             tar_stream.write(chunk)
@@ -116,7 +122,7 @@ def download_binary() -> str:
             if base_name in targets:
                 logger.info("Found target: %s", base_name)
                 target_name: str = targets[base_name]
-                dest_path: Path = install_dir / target_name
+                dest_path: pathlib.Path = install_dir / target_name
 
                 # Extract the binary file
                 src: IO[bytes] | None = tar.extractfile(member)
@@ -129,30 +135,13 @@ def download_binary() -> str:
 
     # Append metadata to the installed binaries
     for target_name in targets.values():
-        dest_path: Path = install_dir / target_name
-        metadata_path: Path = dest_path.with_suffix(".metadata")
+        dest_path: pathlib.Path = install_dir / target_name
+        metadata_path: pathlib.Path = dest_path.with_suffix(".metadata")
         metadata_content: str = f"version={version}\n"
         metadata_path.write_text(metadata_content, encoding="utf-8")
         logger.info("Wrote metadata to %s", metadata_path)
 
     return f"Firecracker v{version} installed to {install_dir}"
-
-
-def get_tar(response: niquests.Response) -> io.BytesIO:
-    """Get tar content.
-
-    Args:
-        response (niquests.Response): The request.
-
-    Returns:
-        io.BytesIO: Return the tar.
-    """
-    tar_stream = io.BytesIO()
-    for chunk in response.iter_content(chunk_size=1024 * 1024):
-        if chunk:
-            tar_stream.write(chunk)
-    tar_stream.seek(0)
-    return tar_stream
 
 
 @get("/")
@@ -167,6 +156,18 @@ async def firecracker_install() -> str:
     return str(download_binary() or "No new version available.")
 
 
+@get("/firecracker/latest-kernel")
+async def firecracker_latest_kernel() -> None:
+    """Fetch the latest Firecracker kernel from S3."""
+    await download_linux_kernel()
+
+
+@get("/favicon.ico")
+async def favicon() -> str:
+    """Return the favicon."""
+    return "data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQEAYAAABPYyMiAAAABmJLR0T///////8JWPfcAAAACXBIWXMAAABIAAAASABGyWs+AAAAF0lEQVRIx2NgGAWjYBSMglEwCkbBSAcACBAAAeaR9cIAAAAASUVORK5CYII="  # ruff: ignore[line-too-long]
+
+
 logging_config = LoggingConfig(
     root={"level": "INFO", "handlers": ["queue_listener"]},
     formatters={"standard": {"format": "%(name)s - %(levelname)s - %(message)s"}},
@@ -174,4 +175,12 @@ logging_config = LoggingConfig(
 )
 
 
-app = Litestar([index, firecracker_install])
+app = Litestar(
+    [
+        index,
+        firecracker_install,
+        firecracker_latest_kernel,
+        favicon,
+    ],
+    logging_config=logging_config,
+)

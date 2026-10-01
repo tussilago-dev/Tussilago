@@ -6,7 +6,9 @@ readme = "README.md"
 authors = [{ name = "Joakim Hellsén", email = "tlovinator@gmail.com" }]
 requires-python = ">=3.14"
 dependencies = [
+    "cryptography>=50.0.2",
     "litestar[standard]>=2.24.0",
+    "natsort>=8.4.0",
     "niquests>=3.21.2",
     "platformdirs>=4.12.1",
 ]

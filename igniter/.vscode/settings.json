@@ -8,11 +8,18 @@
         "isort",
         "Joakim",
         "litestar",
+        "natsorted",
         "niquests",
         "platformdirs",
         "pycodestyle",
         "pydocstyle",
+        "rootfs",
+        "TheLovinator",
+        "tuntap",
         "Tussilago",
-        "TheLovinator"
+        "unsquashfs",
+        "vcpu_count",
+        "vcpus",
+        "vmlinux"
     ]
 }
