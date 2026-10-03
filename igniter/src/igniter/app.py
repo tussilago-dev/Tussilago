@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import io
@@ -5,6 +6,8 @@ import logging
 import os
 import re
 import tarfile
+from ipaddress import IPv4Address
+from ipaddress import IPv4Interface
 from pathlib import Path
 from typing import IO
 from typing import TYPE_CHECKING
@@ -12,6 +15,7 @@ from typing import Any
 
 import httpx
 import niquests
+from anyio import Path as AsyncPath
 from litestar import Litestar
 from litestar import get
 from litestar.logging import LoggingConfig
@@ -19,6 +23,8 @@ from platformdirs import site_bin_path
 from platformdirs import site_cache_path
 from platformdirs import site_data_path
 
+from igniter.firecracker import VirtualMachine
+from igniter.firecracker import VMManager
 from igniter.firecracker import download_linux_kernel
 
 if TYPE_CHECKING:
@@ -162,6 +168,29 @@ async def firecracker_latest_kernel() -> None:
     await download_linux_kernel()
 
 
+@get("/create")
+async def create_vm() -> dict[str, str]:
+    """Create a new VM."""
+    vm_manager = VMManager()
+    vm: VirtualMachine = await vm_manager.create(
+        vm_id="test",
+        rootfs=AsyncPath("/var/lib/tussilago/rootfs/ubuntu-24.04.ext4"),
+        memory_mib=512,
+        vcpus=1,
+        host_ip=IPv4Interface("172.16.0.1/30"),
+        guest_ip=IPv4Address("172.16.0.2"),
+    )
+
+    await asyncio.sleep(1)
+
+    return {
+        "id": vm.id,
+        "guest_ip": str(vm.guest_ip),
+        "tap_device": vm.tap_device,
+        "socket_path": str(vm.socket_path),
+    }
+
+
 @get("/favicon.ico")
 async def favicon() -> str:
     """Return the favicon."""
@@ -176,11 +205,6 @@ logging_config = LoggingConfig(
 
 
 app = Litestar(
-    [
-        index,
-        firecracker_install,
-        firecracker_latest_kernel,
-        favicon,
-    ],
+    [index, firecracker_install, firecracker_latest_kernel, favicon, create_vm],
     logging_config=logging_config,
 )

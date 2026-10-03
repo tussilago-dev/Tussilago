@@ -1,48 +1,164 @@
 import asyncio
-import hashlib
+import ipaddress
 import logging
 import re
 import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import anyio
 import niquests
-from anyio import Path
+from anyio import Path as AsyncPath
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from dbus_fast import Message
+from dbus_fast import MessageType
+from dbus_fast.aio import MessageBus
+from dbus_fast.constants import BusType
 from natsort import natsorted
+from platformdirs import site_log_path
 
 if TYPE_CHECKING:
     from asyncio.subprocess import Process
 
 logger: logging.Logger = logging.getLogger("tussilago")
-
-DATA_DIR: Path = Path("/var/lib/tussilago")
 s3_url = "https://s3.amazonaws.com/spec.ccfc.min"
 
+DATA_DIR: AsyncPath = AsyncPath("/var/lib/tussilago")
+LOG_DIR: Path = site_log_path(appname="Tussilago", appauthor=False, ensure_exists=True)
 
-def generate_mac_from_id(vm_id: str) -> str:
-    """Generate a MAC address from a VM ID.
+
+async def get_default_host_interface() -> str:
+    """Find the host network interface used for default outbound traffic.
+
+    Raises:
+        RuntimeError: If we fail to detect the default interface.
+    """
+    proc: Process = await asyncio.create_subprocess_exec(
+        "ip",
+        "route",
+        "show",
+        "default",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        msg: str = f"Failed to detect default interface: {stderr.decode().strip()}"
+        raise RuntimeError(msg)
+
+    # Output format is typically: "default via 192.168.1.1 dev enp40s0 proto dhcp ..."
+    parts: list[str] = stdout.decode().split()
+    if "dev" in parts:
+        return parts[parts.index("dev") + 1]
+
+    msg = "Could not determine default network interface from routing table."
+    raise RuntimeError(msg)
+
+
+async def start_unit(unit: str) -> None:
+    """Start a systemd unit using D-Bus.
+
+        StartUnit(
+            in  s name,
+            in  s mode,
+            out o job
+        );
+
+    For more information on the systemd D-Bus API:
+        `busctl introspect org.freedesktop.systemd1 /org/freedesktop/systemd1`
+        https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.systemd1.html
 
     Args:
-        vm_id (str): The VM ID.
+        unit (str): The name of the systemd unit to start.
 
-    Returns:
-        str: A MAC address in the format "XX:XX:XX:XX:XX:XX".
+    Raises:
+        RuntimeError: If the D-Bus call to start the unit fails.
     """
-    # Hash the VM ID
-    digest: bytes = hashlib.sha256(vm_id.encode()).digest()
+    bus: MessageBus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
-    # Set locally administered (bit 1 = 1) and unicast (bit 0 = 0)
-    first_byte: int = (digest[0] & 0xFE) | 0x02
+    message = Message(
+        destination="org.freedesktop.systemd1",
+        path="/org/freedesktop/systemd1",
+        interface="org.freedesktop.systemd1.Manager",
+        member="StartUnit",
+        signature="ss",
+        body=[unit, "replace"],
+    )
 
-    mac_bytes: list[int] = [first_byte, *list(digest[1:6])]
-    return ":".join(f"{b:02x}" for b in mac_bytes)
+    reply: Message = await bus.call(message)
+
+    if reply.message_type == MessageType.ERROR:
+        msg: str = f"systemd failed to start {unit}: {reply.body}"
+        raise RuntimeError(msg)
+
+    bus.disconnect()
 
 
-async def download_linux_kernel():
+async def stop_unit(unit: str) -> None:
+    """Stop a systemd unit using D-Bus.
+
+    Enqueues a start job and possibly depending jobs. It takes the unit to activate and a mode string as arguments.
+
+    Modes:
+        - "replace":
+            The method will start the unit and its dependencies, possibly replacing already queued jobs that conflict with it.
+        - "fail":
+            The method will start the unit and its dependencies, but will fail if this would change an already queued job.
+        - "isolate":
+            The method will start the unit in question and terminate all units that are not dependencies of it.
+        - "ignore-dependencies": (not recommended)
+            It will start a unit but ignore all its dependencies.
+        - "ignore-requirements": (not recommended)
+            It will start a unit but only ignore the requirement dependencies.
+
+    For more information:
+        `busctl introspect org.freedesktop.systemd1 /org/freedesktop/systemd1`
+        https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.systemd1.html
+
+
+    Args:
+        unit (str): The name of the systemd unit to stop.
+
+    Raises:
+        RuntimeError: If the D-Bus call to stop the unit fails.
+    """  # ruff: ignore[line-too-long]
+    bus: MessageBus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+
+    reply: Message = await bus.call(
+        Message(
+            destination="org.freedesktop.systemd1",
+            path="/org/freedesktop/systemd1",
+            interface="org.freedesktop.systemd1.Manager",
+            member="StopUnit",
+            signature="ss",  # The signature "ss" indicates that the method expects two string arguments.
+            body=[
+                unit,
+                "Replace",  # "replace", "fail", "isolate", "ignore-dependencies", "ignore-requirements",
+            ],
+        )
+    )
+
+    if reply.message_type == MessageType.ERROR:
+        msg: str = f"systemd failed to stop {unit}: {reply.body}"
+        raise RuntimeError(msg)
+
+    bus.disconnect()
+
+
+def generate_mac_from_ip(guest_ip: ipaddress.IPv4Address) -> str:
+    """Generate a Firecracker-compatible MAC address from a guest IPv4 address.
+
+    Firecracker CI Ubuntu rootfs uses fcnet-setup.sh which expects:
+    06:00:<hex-ip-byte-1>:<hex-ip-byte-2>:<hex-ip-byte-3>:<hex-ip-byte-4>
+    """
+    hex_ip = ":".join(f"{b:02x}" for b in guest_ip.packed)
+    return f"06:00:{hex_ip}"
+
+
+async def download_linux_kernel() -> None:
     """Fetch the latest Firecracker Linux kernel from S3."""
     s = niquests.AsyncSession()
 
@@ -116,14 +232,15 @@ async def download_linux_kernel():
 
     # Save the vmlinux file to /var/lib/tussilago/kernels/vmlinux-{version}
     # TODO(TheLovinator): Should it be configurable?
-    kernel_dir: Path = DATA_DIR / "kernels"
+    kernel_dir: AsyncPath = DATA_DIR / "kernels"
     await kernel_dir.mkdir(parents=True, exist_ok=True)
-    kernel_path: Path = kernel_dir / f"vmlinux-{kernel_version}"
+
+    kernel_path: AsyncPath = kernel_dir / f"vmlinux-{kernel_version}"
     await kernel_path.write_bytes(http_response.content)
     logger.info("Saved vmlinux file to %s", kernel_path)
 
     # Save the latest kernel version to a file for future reference
-    latest_version_file: Path = kernel_dir / "latest_version.txt"
+    latest_version_file: AsyncPath = kernel_dir / "latest_version.txt"
     await latest_version_file.write_text(kernel_version, encoding="utf-8")
 
     latest_ubuntu_key: str = f"{s3_url}?list-type=2&prefix={weekly_builds[0]}x86_64/ubuntu-"
@@ -151,7 +268,7 @@ async def download_linux_kernel():
     latest_ubuntu_key: str = latest_ubuntu_keys[-1]
 
     # ubuntu_version=$(basename $latest_ubuntu_key .squashfs | grep -oE '[0-9]+\.[0-9]+')
-    filename: str = Path(latest_ubuntu_key).name
+    filename: str = AsyncPath(latest_ubuntu_key).name
     ubuntu_version_match: re.Match[str] | None = re.search(r"\d+\.\d+", filename)
     ubuntu_version: str | None = ubuntu_version_match.group(0) if ubuntu_version_match else None
     if not ubuntu_version:
@@ -169,14 +286,14 @@ async def download_linux_kernel():
         return
 
     # Save the Ubuntu rootfs file to /var/lib/tussilago/rootfs/ubuntu-{version}.squashfs
-    rootfs_dir: Path = DATA_DIR / "rootfs"
+    rootfs_dir: AsyncPath = DATA_DIR / "rootfs"
     await rootfs_dir.mkdir(parents=True, exist_ok=True)
 
-    rootfs_path: Path = rootfs_dir / f"ubuntu-{ubuntu_version}.squashfs"
+    rootfs_path: AsyncPath = rootfs_dir / f"ubuntu-{ubuntu_version}.squashfs"
     await rootfs_path.write_bytes(ubuntu_response.content)
     logger.info("Saved Ubuntu rootfs file to %s", rootfs_path)
 
-    extracted_rootfs: Path = rootfs_dir / f"ubuntu-{ubuntu_version}"
+    extracted_rootfs: AsyncPath = rootfs_dir / f"ubuntu-{ubuntu_version}"
 
     # Extract rootfs for customization.
     rootfs_dir = await rootfs_dir.resolve()
@@ -215,15 +332,17 @@ async def download_linux_kernel():
     logger.info("Generated new Ed25519 SSH key pair for rootfs access.")
 
     # Save the public key to the rootfs
-    ssh_dir: Path = extracted_rootfs / "root" / ".ssh"
+    ssh_dir: AsyncPath = extracted_rootfs / "root" / ".ssh"
     await ssh_dir.mkdir(parents=True, exist_ok=True)
+    await ssh_dir.chmod(0o700)
 
-    authorized_keys_path: Path = ssh_dir / "authorized_keys"
+    authorized_keys_path: AsyncPath = ssh_dir / "authorized_keys"
     public_key: bytes = key.public_key().public_bytes(
         encoding=serialization.Encoding.OpenSSH,
         format=serialization.PublicFormat.OpenSSH,
     )
-    await authorized_keys_path.write_bytes(public_key)
+    await authorized_keys_path.write_bytes(public_key + b"\n")
+    await authorized_keys_path.chmod(0o600)
     logger.info("Added SSH public key to %s", authorized_keys_path)
 
     private_key: bytes = key.private_bytes(
@@ -231,8 +350,8 @@ async def download_linux_kernel():
         format=serialization.PrivateFormat.OpenSSH,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    private_key_path: Path = rootfs_dir / "id_ed25519"
-    public_key_path: Path = rootfs_dir / "id_ed25519.pub"
+    private_key_path: AsyncPath = rootfs_dir / "id_ed25519"
+    public_key_path: AsyncPath = rootfs_dir / "id_ed25519.pub"
 
     await private_key_path.write_bytes(private_key)
     await public_key_path.write_bytes(public_key + b"\n")
@@ -241,13 +360,10 @@ async def download_linux_kernel():
     logger.info("Saved SSH public key to %s", public_key_path)
 
     # We will also need to have the key so we can login from the host machine. Save it to current working directory
-    await Path("id_ed25519").write_bytes(private_key)
-    logger.info("Saved SSH private key to %s", Path("id_ed25519"))
+    await AsyncPath("id_ed25519").write_bytes(private_key)
+    logger.info("Saved SSH private key to %s", AsyncPath("id_ed25519"))
 
     # create ext4 filesystem image
-    # sudo chown -R root:root squashfs-root
-    # truncate -s 1G ubuntu-$ubuntu_version.ext4
-    # sudo mkfs.ext4 -d squashfs-root -F ubuntu-$ubuntu_version.ext4
     create_ext4_process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
         "truncate",
         "-s",
@@ -258,7 +374,6 @@ async def download_linux_kernel():
     )
     await create_ext4_process.wait()
 
-    # sudo mkfs.ext4 -d squashfs-root -F ubuntu-$ubuntu_version.ext4
     mkfs_process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
         "mkfs.ext4",
         "-d",
@@ -272,19 +387,19 @@ async def download_linux_kernel():
 
     logger.info("The following files were downloaded and set up:")
 
-    kernel_files: list[Path] = natsorted([f async for f in (DATA_DIR / "kernels").glob("vmlinux-*")])
+    kernel_files: list[AsyncPath] = natsorted([f async for f in (DATA_DIR / "kernels").glob("vmlinux-*")])
     if kernel_files:
         logger.info("Kernel: %s", kernel_files[-1])
     else:
         logger.error("ERROR: No kernel files found in %s", DATA_DIR / "kernels")
 
-    rootfs_files: list[Path] = natsorted([f async for f in rootfs_dir.glob("*.ext4")])
+    rootfs_files: list[AsyncPath] = natsorted([f async for f in rootfs_dir.glob("*.ext4")])
     if rootfs_files:
         logger.info("Rootfs: %s", rootfs_files[-1])
     else:
         logger.error("ERROR: No rootfs files found in %s", rootfs_dir)
 
-    ssh_keys: list[Path] = [f async for f in rootfs_dir.glob("id_ed25519*")]
+    ssh_keys: list[AsyncPath] = [f async for f in rootfs_dir.glob("id_ed25519*")]
     if ssh_keys:
         logger.info("SSH Key: %s", ssh_keys[-1])
     else:
@@ -292,8 +407,8 @@ async def download_linux_kernel():
 
     # Check if the kernel and rootfs files are valid
     if kernel_files and rootfs_files:
-        kernel_file: Path = kernel_files[-1]
-        rootfs_file: Path = rootfs_files[-1]
+        kernel_file: AsyncPath = kernel_files[-1]
+        rootfs_file: AsyncPath = rootfs_files[-1]
 
         if not await kernel_file.exists():
             logger.error("ERROR: Kernel file %s does not exist", kernel_file)
@@ -307,7 +422,7 @@ async def download_linux_kernel():
 
     # Check if rootfs is a valid ext4 filesystem
     if rootfs_files:
-        rootfs_file: Path = rootfs_files[-1]
+        rootfs_file: AsyncPath = rootfs_files[-1]
         e2fsck_process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
             "e2fsck",
             "-fn",
@@ -325,7 +440,7 @@ async def download_linux_kernel():
 
     # Check if the SSH key file exists
     if ssh_keys:
-        ssh_key_file: Path = ssh_keys[-1]
+        ssh_key_file: AsyncPath = ssh_keys[-1]
         if not await ssh_key_file.exists():
             logger.error("ERROR: SSH key file %s does not exist", ssh_key_file)
         else:
@@ -333,9 +448,9 @@ async def download_linux_kernel():
 
     # Check if the SSH public key is in the rootfs authorized_keys
     if ssh_keys and rootfs_files:
-        ssh_key_file: Path = ssh_keys[-1]
-        rootfs_file: Path = rootfs_files[-1]
-        authorized_keys_path: Path = extracted_rootfs / "root" / ".ssh" / "authorized_keys"
+        ssh_key_file: AsyncPath = ssh_keys[-1]
+        rootfs_file: AsyncPath = rootfs_files[-1]
+        authorized_keys_path: AsyncPath = extracted_rootfs / "root" / ".ssh" / "authorized_keys"
         if not await authorized_keys_path.exists():
             logger.error("ERROR: authorized_keys file %s does not exist in the rootfs", authorized_keys_path)
         else:
@@ -367,51 +482,100 @@ async def download_linux_kernel():
 @dataclass(slots=True)
 class VirtualMachine:
     id: str
-    rootfs: Path
+    rootfs: AsyncPath
     tap_device: str
-    socket_path: Path
+    socket_path: AsyncPath
     memory_mib: int
     vcpus: int
+    host_ip: ipaddress.IPv4Interface
+    guest_ip: ipaddress.IPv4Address
 
 
 class VMManager:
     async def _configure_firecracker(self, vm: VirtualMachine) -> None:
+        if await vm.socket_path.exists():
+            await vm.socket_path.unlink()
 
-        process: Process = await asyncio.create_subprocess_exec(
-            "/usr/bin/firecracker",
-            "--api-sock",
-            str(vm.socket_path),
-        )
-        logger.info("Started Firecracker process with PID %d", process.pid)
+        await self.start_firecracker(vm)
+
+        # As the API socket was created by the Firecracker binary outside the code we
+        # have to verify that is was created before starting things.
+        with anyio.fail_after(5.0):
+            while not await vm.socket_path.exists():  # ruff: ignore[async-busy-wait]
+                await anyio.sleep(0.05)
 
         encoded_socket: str = quote(str(vm.socket_path), safe="")
-        client = niquests.AsyncSession(base_url=f"http+unix://{encoded_socket}")
+        async with niquests.AsyncSession(base_url=f"http+unix://{encoded_socket}") as client:
+            await self.set_log_file(client, vm)
+            await self.set_machine_config(client, vm)
+            await self.set_boot_source(client, vm)
+            await self.set_drives_rootfs(client, vm)
+            await self.set_network_interfaces(client, vm)
+            await self.start_microvm(client)
 
-        logger.info("Configuring Firecracker VM %s", vm.id)
-        logger.info("Setting machine configuration: vCPUs=%d, Memory=%d MiB", vm.vcpus, vm.memory_mib)
-        response: niquests.Response = await client.put(
-            "http://localhost/machine-config",
+            logger.info("MicroVM %s successfully started", vm.id)
+
+        # private_key_path: AsyncPath = DATA_DIR / "rootfs" / "id_ed25519"
+        # await self.configure_guest_networking(vm, private_key_path)
+
+        logger.info("Configured guest networking for %s", vm.id)
+
+    async def start_firecracker(self, vm: VirtualMachine) -> None:
+        console_log_path = vm.socket_path.parent / "console.log"
+        console_file = Path(console_log_path).open("wb", buffering=0)
+
+        process: Process = await asyncio.create_subprocess_exec(
+            "/usr/local/bin/firecracker",
+            "--api-sock",
+            str(vm.socket_path),
+            "--enable-pci",
+            stdout=console_file,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+
+        logger.info("Started Firecracker process with PID %d", process.pid)
+
+    async def set_log_file(self, client: niquests.AsyncSession, vm: VirtualMachine) -> None:
+        log_file = Path(LOG_DIR / vm.id / "firecracker.log")
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        res: niquests.Response = await client.put(
+            "/logger",
             json={
-                "vcpu_count": vm.vcpus,
-                "mem_size_mib": vm.memory_mib,
+                "log_path": str(log_file),
+                "level": "Debug",
+                "show_level": True,
+                "show_log_origin": True,
             },
         )
-        logger.info("Response from Firecracker API: %s", response.text)
+        res.raise_for_status()
 
-        kernel_version: str = await self._get_latest_kernel_version()
-        logger.info("Setting boot source: kernel_image_path=%s", f"{DATA_DIR}/kernels/vmlinux-{kernel_version}")
-        response: niquests.Response = await client.put(
-            "http://localhost/boot-source",
+        logger.info("Log file set to: %s", log_file)
+
+    async def start_microvm(self, client: niquests.AsyncSession) -> None:
+        res: niquests.Response = await client.put(
+            "/actions",
             json={
-                "kernel_image_path": f"{DATA_DIR}/kernels/vmlinux-{kernel_version}",
-                "boot_args": "console=ttyS0 reboot=k panic=1",
+                "action_type": "InstanceStart",
             },
         )
-        logger.info("Response from Firecracker API: %s", response.text)
+        res.raise_for_status()
 
-        logger.info("Setting root filesystem: path_on_host=%s", vm.rootfs)
-        response: niquests.Response = await client.put(
-            "http://localhost/drives/rootfs",
+    async def set_network_interfaces(self, client: niquests.AsyncSession, vm: VirtualMachine) -> None:
+        guest_mac: str = generate_mac_from_ip(vm.guest_ip)
+        res: niquests.Response = await client.put(
+            "/network-interfaces/eth0",
+            json={
+                "iface_id": "eth0",
+                "host_dev_name": vm.tap_device,
+                "guest_mac": guest_mac,
+            },
+        )
+        res.raise_for_status()
+
+    async def set_drives_rootfs(self, client: niquests.AsyncSession, vm: VirtualMachine):
+        res: niquests.Response = await client.put(
+            "/drives/rootfs",
             json={
                 "drive_id": "rootfs",
                 "path_on_host": str(vm.rootfs),
@@ -419,73 +583,199 @@ class VMManager:
                 "is_read_only": False,
             },
         )
-        logger.info("Response from Firecracker API: %s", response.text)
+        res.raise_for_status()
 
-        logger.info(
-            "Setting network interface: iface_id=%s, host_dev_name=%s, guest_mac=%s",
-            "eth0",
-            vm.tap_device,
-            generate_mac_from_id(vm.id),
-        )
-        response: niquests.Response = await client.put(
-            "http://localhost/network-interfaces/eth0",
+    async def set_boot_source(self, client: niquests.AsyncSession, vm: VirtualMachine) -> None:
+        kernel_version: str = await self.get_latest_kernel_version()
+        boot_args = f"console=ttyS0 reboot=k panic=1 ip={vm.guest_ip}::{vm.host_ip.ip}:255.255.255.252::eth0:off"
+
+        res: niquests.Response = await client.put(
+            "/boot-source",
             json={
-                "iface_id": "eth0",
-                "host_dev_name": vm.tap_device,
-                "guest_mac": generate_mac_from_id(vm.id),
+                "kernel_image_path": f"{DATA_DIR}/kernels/vmlinux-{kernel_version}",
+                "boot_args": boot_args,
             },
         )
-        logger.info("Response from Firecracker API: %s", response.text)
+        res.raise_for_status()
 
-        await client.close()
+    async def set_machine_config(self, client: niquests.AsyncSession, vm: VirtualMachine) -> None:
+        """Set the machine config.
 
-    async def _get_latest_kernel_version(self) -> str:
-        kernel_dir: Path = DATA_DIR / "kernels"
-        latest_version_file: Path = kernel_dir / "latest_version.txt"
+        Args:
+            vm (VirtualMachine): The Firecracker MicroVM we want to modify.
+            client (niquests.AsyncSession): The AsyncSession client.
+        """
+        res: niquests.Response = await client.put(
+            url="/machine-config",
+            json={
+                "vcpu_count": vm.vcpus,
+                "mem_size_mib": vm.memory_mib,
+            },
+        )
+        res.raise_for_status()
+        logger.info("Machine configured with %s vCPUs and %s mib", vm.vcpus, vm.memory_mib)
+
+    async def get_latest_kernel_version(self) -> str:
+        kernel_dir: AsyncPath = DATA_DIR / "kernels"
+        latest_version_file: AsyncPath = kernel_dir / "latest_version.txt"
         if not await latest_version_file.exists():
             logger.warning("Latest kernel version file not found. Downloading the latest kernel.")
             await download_linux_kernel()
 
         kernel_version: str = await latest_version_file.read_text(encoding="utf-8")
+
+        logger.info("Latest kernel version is %s", kernel_version)
         return kernel_version.strip()
 
-    async def _create_tap(self, tap_device: str) -> None:
-        process: Process = await asyncio.create_subprocess_exec(
+    async def setup_network_interface(self, tap_device: str, tap_ip: str = "172.16.0.1/30") -> None:
+        """Create and configure TAP device."""
+        interface: ipaddress.IPv4Interface = self.validate_and_get_interface(tap_ip)
+
+        del_proc: Process = await asyncio.create_subprocess_exec(
+            "ip",
+            "link",
+            "del",
+            tap_device,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await del_proc.communicate()
+        logger.info("Deleted %s tap (if available)", tap_device)
+
+        # Add tap device
+        add_proc: Process = await asyncio.create_subprocess_exec(
             "ip",
             "tuntap",
             "add",
             tap_device,
             "mode",
             "tap",
+            stderr=asyncio.subprocess.PIPE,
         )
-        await process.wait()
+        _, stderr = await add_proc.communicate()
+        if add_proc.returncode != 0:
+            msg = f"Failed to create TAP device {tap_device}: {stderr.decode().strip()}"
+            raise RuntimeError(msg)
+        logger.info("Created tap for %s", tap_device)
 
-        process: Process = await asyncio.create_subprocess_exec(
+        # Assign host IP to tap
+        add_ip_proc: Process = await asyncio.create_subprocess_exec(
+            "ip",
+            "addr",
+            "add",
+            str(interface),
+            "dev",
+            tap_device,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await add_ip_proc.communicate()
+        if add_ip_proc.returncode != 0:
+            msg = f"Failed to assign IP {interface} to {tap_device}: {stderr.decode().strip()}"
+            raise RuntimeError(msg)
+        logger.info("Assigned %s host IP to %s", interface, tap_device)
+
+        # Bring tap interface up
+        bring_up_proc: Process = await asyncio.create_subprocess_exec(
             "ip",
             "link",
             "set",
             tap_device,
             "up",
+            stderr=asyncio.subprocess.PIPE,
         )
-        await process.wait()
+        _, stderr = await bring_up_proc.communicate()
+        if bring_up_proc.returncode != 0:
+            msg = f"Failed to bring up TAP device {tap_device}: {stderr.decode().strip()}"
+            raise RuntimeError(msg)
+        logger.info("Brought up tap %s", tap_device)
+
+        # Set up microVM internet access
+        # TODO(TheLovinator): Remove this as it is unnecessary to remove it without reason,
+        #   we should remove everything when we remove the VMs.
+        host_iface: str = await get_default_host_interface()
+        setup_internet_proc: Process = await asyncio.create_subprocess_exec(
+            "iptables",
+            "-t",
+            "nat",
+            "-D",
+            "POSTROUTING",
+            "-o",
+            host_iface,
+            "-j",
+            "MASQUERADE",
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await setup_internet_proc.communicate()
+        if setup_internet_proc.returncode != 0:
+            err_msg = stderr.decode().strip()
+            # Ignore if rule wasn't there in the first place
+            if "Bad rule" not in err_msg and "does a matching rule exist" not in err_msg:
+                msg = f"Failed to delete outbound NAT via {host_iface}: {err_msg}"
+                raise RuntimeError(msg)
+            logger.debug("NAT rule via %s did not exist, nothing to delete.", host_iface)
+        else:
+            logger.info("Removed outbound NAT rule via %s", host_iface)
+
+        # TODO(TheLovinator): Move to nftables
+        # TODO(TheLovinator): Get host_iface instead of rawdogging enp40s0
+        setup_internet_proc: Process = await asyncio.create_subprocess_exec(
+            "iptables",
+            "-t",
+            "nat",
+            "-A",
+            "POSTROUTING",
+            "-o",
+            host_iface,
+            "-j",
+            "MASQUERADE",
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await setup_internet_proc.communicate()
+        if setup_internet_proc.returncode != 0:
+            msg = f"Failed to create outbound NAT via {host_iface}: {stderr.decode().strip()}"
+            raise RuntimeError(msg)
+        logger.info("Added outbound NAT rule via %s", host_iface)
+
+    def validate_and_get_interface(self, tap_ip: str) -> ipaddress.IPv4Interface:
+        """Validate IP.
+
+        Args:
+            tap_ip (str): IP with optional subnet. For example 172.16.0.1/30
+
+        Returns:
+            ipaddress.IPv4Interface: A single IPv4 Addresses.
+
+        Raises:
+            ValueError: If not valid IPv4.
+        """
+        try:
+            interface = ipaddress.IPv4Interface(tap_ip)
+        except ValueError as e:
+            msg: str = f"'{tap_ip}' is not a valid IPv4 address/interface."
+            raise ValueError(msg) from e
+        if not interface.is_private:
+            msg: str = f"'{tap_ip}' is not a private IPv4 address."
+            raise ValueError(msg)
+        return interface
 
     async def create(
         self,
         *,
         vm_id: str,
-        rootfs: Path,
+        rootfs: AsyncPath,
+        host_ip: ipaddress.IPv4Interface,
+        guest_ip: ipaddress.IPv4Address,
         memory_mib: int = 512,
         vcpus: int = 1,
     ) -> VirtualMachine:
-        vm_dir: Path = Path("/var/lib/tussilago/vms") / vm_id
-        await vm_dir.mkdir(parents=True, exist_ok=False)
+        vm_dir: AsyncPath = AsyncPath("/var/lib/tussilago/vms") / vm_id
+        await vm_dir.mkdir(parents=True, exist_ok=True)
 
-        socket_path: Path = vm_dir / "firecracker.sock"
+        socket_path: AsyncPath = vm_dir / "firecracker.sock"
         tap_device: str = f"tap-{vm_id[:8]}"
-        await self._create_tap(tap_device)
+        await self.setup_network_interface(tap_device, str(host_ip))
 
-        kernel_dir: Path = DATA_DIR / "kernels"
-        latest_version_file: Path = kernel_dir / "latest_version.txt"
+        kernel_dir: AsyncPath = DATA_DIR / "kernels"
+        latest_version_file: AsyncPath = kernel_dir / "latest_version.txt"
         if not await latest_version_file.exists():
             logger.warning("Latest kernel version file not found. Downloading the latest kernel.")
             await download_linux_kernel()
@@ -497,8 +787,66 @@ class VMManager:
             socket_path=socket_path,
             memory_mib=memory_mib,
             vcpus=vcpus,
+            host_ip=host_ip,
+            guest_ip=guest_ip,
         )
 
         await self._configure_firecracker(vm)
 
         return vm
+
+    async def configure_guest_networking(
+        self,
+        vm: VirtualMachine,
+        key_path: AsyncPath | Path,
+        timeout: float = 30.0,  # Ubuntu with systemd can take 15-25s on first boot
+    ) -> None:
+        guest_ip = str(vm.guest_ip)
+        gateway_ip = str(vm.host_ip.ip)
+
+        await anyio.Path(key_path).chmod(0o600)
+
+        guest_command: str = (
+            f"ip route replace default via {gateway_ip} dev eth0 && "
+            "printf 'nameserver 1.1.1.1\\noptions single-request-reopen\\n' > /etc/resolv.conf"
+        )
+
+        ssh_args: list[str] = [
+            "ssh",
+            "-i",
+            str(key_path),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=2",
+            f"root@{guest_ip}",
+            guest_command,
+        ]
+
+        logger.info("Waiting for SSH on guest %s (%s)...", vm.id, guest_ip)
+
+        last_error = "No attempt made"
+        try:
+            with anyio.fail_after(timeout):
+                while True:
+                    proc = await asyncio.create_subprocess_exec(
+                        *ssh_args,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _, stderr = await proc.communicate()
+
+                    if proc.returncode == 0:
+                        logger.info("Guest networking configured successfully on %s", vm.id)
+                        return
+
+                    last_error = stderr.decode().strip()
+                    logger.warning("SSH to %s failed: %s (retrying...)", guest_ip, last_error or "exit code non-zero")
+                    await anyio.sleep(0.5)
+        except TimeoutError:
+            msg = f"Failed to connect to guest {vm.id} ({guest_ip}) after {timeout}s. Last SSH error: '{last_error}'"
+            raise TimeoutError(msg) from None

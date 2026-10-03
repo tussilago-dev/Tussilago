@@ -7,6 +7,7 @@ authors = [{ name = "Joakim Hellsén", email = "tlovinator@gmail.com" }]
 requires-python = ">=3.14"
 dependencies = [
     "cryptography>=50.0.2",
+    "dbus-fast>=5.2.0",
     "litestar[standard]>=2.24.0",
     "natsort>=8.4.0",
     "niquests>=3.21.2",
