@@ -9,6 +9,7 @@ import tarfile
 from ipaddress import IPv4Address
 from ipaddress import IPv4Interface
 from pathlib import Path
+from secrets import randbelow
 from typing import IO
 from typing import TYPE_CHECKING
 from typing import Any
@@ -23,7 +24,6 @@ from platformdirs import site_bin_path
 from platformdirs import site_cache_path
 from platformdirs import site_data_path
 
-from igniter.firecracker import VirtualMachine
 from igniter.firecracker import VMManager
 from igniter.firecracker import download_linux_kernel
 
@@ -43,6 +43,9 @@ if os.name != "posix":
 if os.geteuid() != 0:
     msg = "This script must be run as root."
     raise PermissionError(msg)
+
+
+vm_manager = VMManager()
 
 cache_location: pathlib.Path = site_cache_path(appname="Tussilago", appauthor=False, ensure_exists=True)
 site_data_location: pathlib.Path = site_data_path(appname="Tussilago", appauthor=False, ensure_exists=True)
@@ -170,10 +173,9 @@ async def firecracker_latest_kernel() -> None:
 
 @get("/create")
 async def create_vm() -> dict[str, str]:
-    """Create a new VM."""
-    vm_manager = VMManager()
-    vm: VirtualMachine = await vm_manager.create(
-        vm_id="test",
+    """Create a VM with a random ID."""
+    vm = await vm_manager.create(
+        vm_id=randbelow(1000) + 1,
         rootfs=AsyncPath("/var/lib/tussilago/rootfs/ubuntu-24.04.ext4"),
         memory_mib=512,
         vcpus=1,
@@ -184,11 +186,17 @@ async def create_vm() -> dict[str, str]:
     await asyncio.sleep(1)
 
     return {
-        "id": vm.id,
+        "id": str(vm.id),
         "guest_ip": str(vm.guest_ip),
         "tap_device": vm.tap_device,
-        "socket_path": str(vm.socket_path),
     }
+
+
+@get("/running")
+async def running_vms() -> list[str]:
+    """List running VMs."""
+    vms: list[str] = await vm_manager.list_running()
+    return vms
 
 
 @get("/favicon.ico")
@@ -205,6 +213,6 @@ logging_config = LoggingConfig(
 
 
 app = Litestar(
-    [index, firecracker_install, firecracker_latest_kernel, favicon, create_vm],
+    [index, firecracker_install, firecracker_latest_kernel, favicon, create_vm, running_vms],
     logging_config=logging_config,
 )
