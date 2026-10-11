@@ -14,13 +14,15 @@ dependencies = [
     "platformdirs>=4.12.1",
 ]
 
+[dependency-groups]
+dev = ["debugpy>=1.8.22"]
+
 [project.scripts]
 igniter = "igniter:main"
 
 [build-system]
 requires = ["uv_build>=0.12.2,<0.13.0"]
 build-backend = "uv_build"
-
 
 [tool.ruff]
 preview = true
