@@ -840,9 +840,12 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
 
         return self._bus
 
-    async def _systemd_call(self, member: str, signature: str, body: list[object]) -> list[object]:
-        logger.info("Replace body:list[object] in _systemd_call with %s", {type(body)})
-
+    async def _systemd_call(
+        self,
+        member: str,
+        signature: str,
+        body: list[str | list[tuple[str, Variant]]],
+    ) -> list[str]:
         bus: MessageBus = await self._get_bus()
         reply: Message = await bus.call(
             Message(
@@ -1067,19 +1070,19 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
             logger.error("Unexpected ListUnits reply structure: %r", response)
             return []
 
-        units = response[0]
+        units: str | list[tuple[str]] = response[0]
         logger.info("systemd returned %d loaded units", len(units))
 
         running: list[str] = []
 
         for index, unit in enumerate(units):
-            if not isinstance(unit, (list, tuple)) or len(unit) < 10:
+            if not isinstance(unit, (list, tuple)) or len(unit) < 10:  # ruff: ignore[magic-value-comparison]
                 logger.warning("Malformed unit at index %d: %r", index, unit)
                 continue
 
             name, load_state, active_state, sub_state = (unit[0], unit[2], unit[3], unit[4])
 
-            if isinstance(name, str) and name.startswith("tussilago-vm-"):
+            if name.startswith("tussilago-vm-"):
                 logger.info(
                     "VM unit: name=%s load=%s active=%s sub=%s",
                     name,
