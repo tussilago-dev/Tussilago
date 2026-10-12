@@ -24,12 +24,14 @@ from platformdirs import site_bin_path
 from platformdirs import site_cache_path
 from platformdirs import site_data_path
 
-from igniter.firecracker import VMManager
-from igniter.firecracker import download_linux_kernel
+from igniter.firecracker.images import download_linux_kernel
+from igniter.firecracker.manager import VMManager
 
 if TYPE_CHECKING:
     import pathlib
     from _hashlib import HASH
+
+    from igniter.firecracker.models import VirtualMachine
 
 # TODO(TheLovinator): Add support for Aarch64
 # TODO(TheLovinator): Install to /opt/tussilago/firecracker/<version> and create symlinks
@@ -174,7 +176,7 @@ async def firecracker_latest_kernel() -> None:
 @get("/create")
 async def create_vm() -> dict[str, str]:
     """Create a VM with a random ID."""
-    vm = await vm_manager.create(
+    vm: VirtualMachine = await vm_manager.create(
         vm_id=randbelow(1000) + 1,
         rootfs=AsyncPath("/var/lib/tussilago/rootfs/ubuntu-24.04.ext4"),
         memory_mib=512,
