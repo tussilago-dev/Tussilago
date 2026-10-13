@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import tarfile
+from dataclasses import dataclass
 from ipaddress import IPv4Address
 from ipaddress import IPv4Interface
 from pathlib import Path
@@ -56,11 +57,52 @@ install_dir: Path = site_bin_path()
 logger: logging.Logger = logging.getLogger("tussilago")
 
 
-async def fetch_latest_firecracker_release() -> tuple[str, str, str] | None:
+FIRECRACKER_ASSET_PATTERN: re.Pattern[str] = re.compile(r"firecracker-v(?P<version>\d+\.\d+\.\d+)-x86_64\.tgz")
+
+
+@dataclass(slots=True)
+class LatestFirecrackerRelease:
+    version: str
+    download_url: str
+    digest: str
+
+
+async def parse_firecracker_asset(asset: dict[str, Any]) -> LatestFirecrackerRelease | None:
+    """Validate and convert the GitHub asset dictionary into LatestFirecrackerRelease."""
+    # name = "firecracker-v1.17.0-x86_64.tgz"
+    name: str = asset.get("name", "")
+    if not name:
+        return None
+
+    match: re.Match[str] | None = FIRECRACKER_ASSET_PATTERN.fullmatch(name)
+    if match is None:
+        logger.debug("Skipping asset %s: does not match pattern", name)
+        return None
+
+    # download_url = "https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/firecracker-v1.17.0-x86_64.tgz"
+    download_url: str = asset.get("browser_download_url", "")
+    if not download_url.startswith("https://"):
+        logger.warning("Aborting as '%s' does not start with https://", download_url)
+        return None
+
+    # digest = "06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558"
+    digest: str = asset.get("digest", "")
+    if not digest.startswith("sha256:"):
+        logger.warning("Missing SHA-256 digest for '%s', (Digest: '%s')", name, digest)
+        return None
+
+    return LatestFirecrackerRelease(
+        version=match.group("version"),
+        download_url=download_url,
+        digest=digest.removeprefix("sha256:"),
+    )
+
+
+async def fetch_latest_firecracker_release() -> LatestFirecrackerRelease | None:
     """Fetch the latest Firecracker release from GitHub.
 
     Returns:
-        tuple[str, str, str] | None: Version, download URL, and expected hash.
+        LatestFirecrackerRelease | None: Version, download URL, and expected hash.
     """
     url = "https://api.github.com/repos/firecracker-microvm/firecracker/releases/latest"
     async with httpx.AsyncClient() as client:
@@ -71,35 +113,27 @@ async def fetch_latest_firecracker_release() -> tuple[str, str, str] | None:
     assets: list[dict[str, Any]] = json_data.get("assets", [])
 
     for asset in assets:
-        name: str = asset.get("name", "")
-        if not name:
-            continue
+        release: LatestFirecrackerRelease | None = await parse_firecracker_asset(asset=asset)
+        if release:
+            return release
 
-        pattern = r"firecracker-v(\d+\.\d+\.\d+)-x86_64\.tgz"
-        match: re.Match[str] | None = re.fullmatch(pattern=pattern, string=name)
-        if not match:
-            logger.debug("Skipping asset %s: does not match pattern", name)
-            continue
-
-        version = str(match.group(1))
-        download_url = str(asset.get("browser_download_url", ""))
-        expected_hash: str = str(asset.get("digest", "")).replace("sha256:", "")
-
-        return version, download_url, expected_hash
     return None
 
 
-async def download_binary() -> str:
+async def download_binary() -> str | None:
     """Download the Firecracker and Jailer binary to /usr/bin/.
 
     Raises:
         RuntimeError: If the checksum does not match.
     """
-    release: tuple[str, str, str] | None = await fetch_latest_firecracker_release()
+    release: LatestFirecrackerRelease | None = await fetch_latest_firecracker_release()
     if release is None:
         return "No new version available."
 
-    version, url, expected_hash = release
+    version: str = release.version
+    url: str = release.download_url
+    expected_hash: str = release.digest
+
     logger.info("Downloading Firecracker v%s from %s", version, url)
 
     response: niquests.AsyncResponse = await niquests.aget(url, stream=True)
@@ -109,7 +143,7 @@ async def download_binary() -> str:
     hasher: HASH = hashlib.sha256()
     logger.info("Calculating checksum and writing to tar stream...")
 
-    for chunk in response.ait_iter_bytes(chunk_size=8192):
+    async for chunk in await response.iter_content(chunk_size=8192):
         if chunk:
             hasher.update(chunk)
             tar_stream.write(chunk)
@@ -164,7 +198,11 @@ async def index() -> str:
 @get("/firecracker/install")
 async def firecracker_install() -> str:
     """Install Firecracker to /opt/tussilago/firecracker/<version>."""
-    return str(download_binary() or "No new version available.")
+    downloaded_binary: str | None = await download_binary()
+    if not downloaded_binary:
+        return "No new version available."
+
+    return downloaded_binary
 
 
 @get("/firecracker/latest-kernel")

@@ -15,7 +15,7 @@ from igniter.firecracker.settings import DATA_DIR
 logger: logging.Logger = logging.getLogger("tussilago")
 
 
-async def get_s3_listing(session: niquests.AsyncSession, weekly_builds: str) -> niquests.Response | None:
+async def get_s3_listing(session: niquests.AsyncSession, weekly_builds: str) -> str | None:
     """Fetch the S3 XML listing for Ubuntu rootfs images in a build prefix.
 
     Args:
@@ -39,7 +39,7 @@ async def get_s3_listing(session: niquests.AsyncSession, weekly_builds: str) -> 
         logger.warning("No response received from S3 when fetching Ubuntu rootfs files.")
         return None
 
-    return latest_ubuntu_response
+    return latest_ubuntu_response.text
 
 
 async def save_ssh_keys(rootfs_dir: AsyncPath, extracted_rootfs: AsyncPath) -> None:
@@ -486,13 +486,13 @@ async def download_linux_kernel() -> None:  # ruff: ignore[too-many-return-state
 
     await save_kernel_to_disk(session, latest_kernel_key)
 
-    latest_ubuntu_response: niquests.Response | None = await get_s3_listing(session, weekly_builds)
-    if not latest_ubuntu_response or not latest_ubuntu_response.text:
+    latest_ubuntu_response: str | None = await get_s3_listing(session, weekly_builds)
+    if not latest_ubuntu_response or not latest_ubuntu_response:
         return
 
     latest_ubuntu_keys: str | None = get_latest_ubuntu_key(
         weekly_builds,
-        latest_ubuntu_response_text=latest_ubuntu_response.text,
+        latest_ubuntu_response_text=latest_ubuntu_response,
     )
     if not latest_ubuntu_keys:
         return
