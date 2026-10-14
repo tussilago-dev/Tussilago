@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger("tussilago")
 TAP_NAME_PATTERN: re.Pattern[str] = re.compile(r"[A-Za-z0-9_.-]{1,15}")
-VM_UID_GID_BASE = 20000
 
 
 class VMManager:  # ruff: ignore[too-many-public-methods]
@@ -127,7 +126,7 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
 
     def jailer_uid(self, vm_id: int) -> int:
         self.validate_vm_id(vm_id)
-        return VM_UID_GID_BASE + vm_id
+        return 20000 + vm_id
 
     def jailer_gid(self, vm_id: int) -> int:
         return self.jailer_uid(vm_id)
