@@ -1,25 +1,32 @@
-import asyncio
 import logging
 import os
 from ipaddress import IPv4Address
 from ipaddress import IPv4Interface
-from secrets import randbelow
 from typing import TYPE_CHECKING
 
 from anyio import Path as AsyncPath
 from litestar import Litestar
+from litestar import delete
 from litestar import get
+from litestar import post
 from litestar.logging import LoggingConfig
+from litestar.status_codes import HTTP_200_OK
+from pydantic import BaseModel
+from pydantic import Field
 
 from igniter.firecracker.images import download_linux_kernel
 from igniter.firecracker.install import LatestFirecrackerRelease
 from igniter.firecracker.install import add_metadata
 from igniter.firecracker.install import download_binary
 from igniter.firecracker.install import fetch_latest_firecracker_release
+from igniter.firecracker.ipam import AllocatedNetwork
+from igniter.firecracker.ipam import ipam
 from igniter.firecracker.manager import VMManager
+from igniter.firecracker.models import VirtualMachine
+from igniter.firecracker.settings import VM_DATA_DIR
 
 if TYPE_CHECKING:
-    from igniter.firecracker.models import VirtualMachine
+    from anyio._core._fileio import Path
 
 # TODO(TheLovinator): Add support for Aarch64
 # TODO(TheLovinator): Install to /opt/tussilago/firecracker/<version> and create symlinks
@@ -38,6 +45,13 @@ if os.geteuid() != 0:
 
 
 vm_manager = VMManager()
+
+
+class CreateVMRequest(BaseModel):
+    vm_id: int = Field(..., ge=1, le=9999)
+    memory_mib: int = Field(default=512, ge=128)
+    vcpus: int = Field(default=1, ge=1, le=32)
+    rootfs_path: str = "/var/lib/tussilago/rootfs/ubuntu-24.04.ext4"
 
 
 @get("/")
@@ -82,32 +96,67 @@ async def firecracker_latest_kernel() -> None:
     await download_linux_kernel()
 
 
-@get("/create")
-async def create_vm() -> dict[str, str]:
+@post("/vms")
+async def create_vm(data: CreateVMRequest) -> dict[str, str]:
     """Create a VM with a random ID."""
-    vm: VirtualMachine = await vm_manager.create(
-        vm_id=randbelow(1000) + 1,
-        rootfs=AsyncPath("/var/lib/tussilago/rootfs/ubuntu-24.04.ext4"),
-        memory_mib=512,
-        vcpus=1,
-        host_ip=IPv4Interface("172.16.0.1/30"),
-        guest_ip=IPv4Address("172.16.0.2"),
-    )
+    alloc: AllocatedNetwork = await ipam.allocate(data.vm_id)
 
-    await asyncio.sleep(1)
+    vm: VirtualMachine = await vm_manager.create(
+        vm_id=data.vm_id,
+        rootfs=AsyncPath(data.rootfs_path),
+        memory_mib=data.memory_mib,
+        vcpus=data.vcpus,
+        host_ip=alloc.host_ip,
+        guest_ip=alloc.guest_ip,
+    )
 
     return {
         "id": str(vm.id),
         "guest_ip": str(vm.guest_ip),
+        "gateway_ip": str(vm.host_ip.ip),
         "tap_device": vm.tap_device,
+        "unit_name": vm.unit_name,
     }
 
 
-@get("/running")
-async def running_vms() -> list[str]:
-    """List running VMs."""
-    vms: list[str] = await vm_manager.list_running()
-    return vms
+@get("/vms/{vm_id:int}")
+async def get_vm_status(vm_id: int) -> dict[str, str | int]:
+    """Check VM unit status and retrieve console output."""
+    running_units: list[str] = await vm_manager.list_running()
+    unit_name: str = f"tussilago-vm-{vm_id}.service"
+    is_running: bool = unit_name in running_units
+
+    console_log: Path = VM_DATA_DIR / str(vm_id) / "console.log"
+    logs = ""
+    if await console_log.exists():
+        logs: str = await console_log.read_text(encoding="utf-8")
+        logs: str = "\n".join(logs.splitlines()[-20:])
+
+    return {
+        "id": vm_id,
+        "running": is_running,
+        "unit_name": unit_name,
+        "latest_logs": logs,
+    }
+
+
+@delete("/vms/{vm_id:int}", status_code=HTTP_200_OK)
+async def delete_vm(vm_id: int) -> dict[str, str]:
+    """Stop and destroy a MicroVM and release network resources."""
+    vm = VirtualMachine(
+        id=vm_id,
+        rootfs=AsyncPath("/unused"),
+        tap_device=f"tap-{vm_id}",
+        memory_mib=0,
+        vcpus=0,
+        host_ip=IPv4Interface("0.0.0.0/32"),
+        guest_ip=IPv4Address("0.0.0.0"),  # ruff: ignore[hardcoded-bind-all-interfaces]
+    )
+
+    await vm_manager.destroy(vm)
+    await ipam.release(vm_id)
+
+    return {"status": "deleted", "id": str(vm_id)}
 
 
 @get("/favicon.ico")
@@ -124,6 +173,6 @@ logging_config = LoggingConfig(
 
 
 app = Litestar(
-    [index, firecracker_install, firecracker_latest_kernel, favicon, create_vm, running_vms],
+    [index, firecracker_install, firecracker_latest_kernel, favicon, create_vm, delete_vm, get_vm_status],
     logging_config=logging_config,
 )

@@ -1,5 +1,7 @@
 import asyncio
+import json
 from typing import TYPE_CHECKING
+from typing import Any
 
 if TYPE_CHECKING:
     import ipaddress
@@ -14,9 +16,11 @@ async def get_default_host_interface() -> str:
     """
     proc: Process = await asyncio.create_subprocess_exec(
         "ip",
+        "-4",
+        "--json",
         "route",
-        "show",
-        "default",
+        "get",
+        "8.8.8.8",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -25,10 +29,12 @@ async def get_default_host_interface() -> str:
         msg: str = f"Failed to detect default interface: {stderr.decode().strip()}"
         raise RuntimeError(msg)
 
-    # Output format is typically: "default via 192.168.1.1 dev enp40s0 proto dhcp ..."
-    parts: list[str] = stdout.decode().split()
-    if "dev" in parts:
-        return parts[parts.index("dev") + 1]
+    routes: list[dict[str, Any]] = json.loads(stdout)
+
+    for route in routes:
+        dev = route.get("dev")
+        if isinstance(dev, str):
+            return dev
 
     msg = "Could not determine default network interface from routing table."
     raise RuntimeError(msg)

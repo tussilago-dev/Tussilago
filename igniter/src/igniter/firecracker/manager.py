@@ -2,7 +2,6 @@ import asyncio
 import ipaddress
 import logging
 import os
-import re
 import shutil
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -27,19 +26,21 @@ from igniter.firecracker.settings import LOG_DIR
 from igniter.firecracker.settings import VM_DATA_DIR
 from igniter.networking import generate_mac_from_ip
 from igniter.networking import get_default_host_interface
+from igniter.nftables import setup_firewall
+from igniter.nftables import teardown_firewall
 
 if TYPE_CHECKING:
     from asyncio.subprocess import Process
 
 
 logger: logging.Logger = logging.getLogger("tussilago")
-TAP_NAME_PATTERN: re.Pattern[str] = re.compile(r"[A-Za-z0-9_.-]{1,15}")
 
 
 class VMManager:  # ruff: ignore[too-many-public-methods]
     """Manage Firecracker microVMs through Jailer and systemd."""
 
     def __init__(self) -> None:
+        """Initialize the VMManager with the D-Bus Message Bus."""
         self._bus: MessageBus | None = None
 
     async def _get_bus(self) -> MessageBus:
@@ -99,7 +100,11 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
         await vm.jail_socket_path.unlink(missing_ok=True)
 
         await self.start_firecracker(vm)
-        await self.wait_for_socket(vm)
+
+        # Wait for Firecracker socket to be created.
+        with anyio.fail_after(5.0):
+            while not await vm.jail_socket_path.exists():  # ruff: ignore[async-busy-wait]
+                await anyio.sleep(0.05)
 
         encoded_socket: str = quote(str(vm.jail_socket_path), safe="")
         async with niquests.AsyncSession(base_url=f"http+unix://{encoded_socket}") as client:
@@ -111,13 +116,6 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
             await self.start_microvm(client)
 
         logger.info("MicroVM %s started", vm.id)
-
-    async def stop_unit(self, unit: str) -> None:
-        await self._systemd_call(
-            member="StopUnit",
-            signature="ss",
-            body=[unit, "replace"],
-        )
 
     def validate_vm_id(self, vm_id: int) -> None:
         if not 1 <= vm_id <= 9999:  # ruff: ignore[magic-value-comparison]
@@ -136,16 +134,11 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
 
         Raises:
             ValueError: If VM ID is invalid.
-            ValueError: If TAP name is invalid.
             ValueError: If memory or vCPUs values too low.
             RuntimeError: Failed to create guest rootfs.
             FileNotFoundError: If kernel was not found.
         """
         self.validate_vm_id(vm.id)
-
-        if not TAP_NAME_PATTERN.fullmatch(vm.tap_device):
-            msg: str = f"Invalid TAP name: {vm.tap_device!r}"
-            raise ValueError(msg)
 
         if vm.memory_mib < 128 or vm.vcpus < 1:  # ruff: ignore[magic-value-comparison]
             msg: str = "VM must have at least 128 MiB RAM and one vCPU"
@@ -204,7 +197,13 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
         await AsyncPath(rootfs).chmod(0o600)
 
     async def start_firecracker(self, vm: VirtualMachine) -> None:
-        """Start Jailer as a systemd-supervised process."""
+        """Start Jailer as a systemd-supervised process.
+
+        Raises:
+            RuntimeError: If jailer failed to create all the directories.
+            FileNotFoundError: Kernel or rootfs is missing from Jailer root dir.
+
+        """
         self.validate_vm_id(vm.id)
         if not await vm.jail_socket_path.parent.is_dir():
             msg = "Jailer resources have not been prepared"
@@ -288,6 +287,7 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
                 logger.warning("Malformed unit at index %d: %r", index, unit)
                 continue
 
+            # pyrefly: ignore[bad-index]
             name, load_state, active_state, sub_state = (unit[0], unit[2], unit[3], unit[4])
 
             if name.startswith("tussilago-vm-"):
@@ -305,16 +305,6 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
         logger.info("Found %d running Tussilago VMs: %s", len(running), running)
         return running
 
-    async def wait_for_socket(
-        self,
-        vm: VirtualMachine,
-        timeout: float = 5.0,
-    ) -> None:
-        """Wait for the API socket, failing if Jailer exits or times out."""
-        with anyio.fail_after(timeout):
-            while not await vm.jail_socket_path.exists():
-                await anyio.sleep(0.05)
-
     async def stop_firecracker(self, vm: VirtualMachine) -> None:
         """Stop the systemd unit supervising this VM.
 
@@ -322,7 +312,11 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
             RuntimeError: If no VM with that ID was found.
         """
         try:
-            await self.stop_unit(vm.unit_name)
+            await self._systemd_call(
+                member="StopUnit",
+                signature="ss",
+                body=[vm.unit_name, "replace"],
+            )
         except RuntimeError as exc:
             if "NoSuchUnit" not in str(exc):
                 raise
@@ -484,6 +478,7 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
             "ip",
             "tuntap",
             "add",
+            "dev",
             tap_device,
             "mode",
             "tap",
@@ -615,29 +610,23 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
         )
 
         try:
+            host_iface: str = await get_default_host_interface()
+
             await self.setup_network_interface(
                 vm.tap_device,
                 str(host_ip),
             )
+            await setup_firewall(
+                tap_name=vm.tap_device,
+                guest_ip=str(vm.guest_ip),
+                external_interface=host_iface,
+            )
+
             await self._configure_firecracker(vm)
+
         except BaseException:
-            # Roll back partial setup, including cancellation.
-            try:
-                await self.stop_firecracker(vm)
-            except Exception:
-                logger.exception("Failed to stop partially started VM %s", vm.id)
-
-            try:
-                await self._delete_tap(vm.tap_device)
-            except Exception:
-                logger.exception("Failed to remove TAP for VM %s", vm.id)
-
-            try:
-                await asyncio.to_thread(shutil.rmtree, JAILER_ROOT / str(vm.id), True)
-                await asyncio.to_thread(shutil.rmtree, vm_dir, True)
-            except Exception:
-                logger.exception("Failed to clean up VM files for %s", vm.id)
-
+            logger.warning("VM %s creation failed halfway; rolling back...", vm.id)
+            await self.destroy(vm)
             raise
 
         return vm
@@ -662,18 +651,22 @@ class VMManager:  # ruff: ignore[too-many-public-methods]
 
     async def destroy(self, vm: VirtualMachine) -> None:
         """Stop a VM and remove its ephemeral resources."""
-        await self.stop_firecracker(vm)
-        await self._delete_tap(vm.tap_device)
+        try:
+            await self.stop_firecracker(vm)
+        except Exception:
+            logger.exception("Error stopping systemd unit for VM %s", vm.id)
 
-        await asyncio.to_thread(
-            shutil.rmtree,
-            JAILER_ROOT / str(vm.id),
-            True,
-        )
-        await asyncio.to_thread(
-            shutil.rmtree,
-            VM_DATA_DIR / str(vm.id),
-            True,
-        )
+        try:
+            await self._delete_tap(vm.tap_device)
+        except Exception:
+            logger.exception("Error deleting TAP device %s", vm.tap_device)
 
-        logger.info("Destroyed VM %s", vm.id)
+        try:
+            await teardown_firewall(guest_ip=str(vm.guest_ip))
+        except Exception:
+            logger.exception("Error removing nftables rules for VM %s", vm.id)
+
+        await asyncio.to_thread(shutil.rmtree, JAILER_ROOT / "firecracker" / str(vm.id), True)
+        await asyncio.to_thread(shutil.rmtree, VM_DATA_DIR / str(vm.id), True)
+
+        logger.info("Successfully cleaned up all resources for VM %s", vm.id)
