@@ -1,0 +1,20 @@
+# Start Igniter with:
+# sudo uv run python -Xfrozen_modules=off -m debugpy --listen 127.0.0.1:5678 --wait-for-client -m litestar --app igniter.app:app run --debug --reload
+# And then connect to debugpy with vscode.
+@vmId = 1234
+
+### Create VM
+POST http://localhost:8000/vms
+Content-Type: application/json
+
+{
+  "vm_id": {{vmId}},
+  "memory_mib": 512,
+  "vcpus": 1
+}
+
+### Get VM status
+GET http://localhost:8000/vms/{{vmId}}
+
+### Delete VM
+DELETE http://localhost:8000/vms/{{vmId}}
