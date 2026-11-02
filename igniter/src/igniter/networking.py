@@ -3,6 +3,8 @@ import json
 from typing import TYPE_CHECKING
 from typing import Any
 
+from igniter.nftables import nft
+
 if TYPE_CHECKING:
     import ipaddress
     from asyncio.subprocess import Process
@@ -48,3 +50,32 @@ def generate_mac_from_ip(guest_ip: ipaddress.IPv4Address) -> str:
     """
     hex_ip: str = ":".join(f"{b:02x}" for b in guest_ip.packed)
     return f"06:00:{hex_ip}"
+
+
+async def delete_tap(vm_id: str) -> str:
+    """Delete a TAP device for a given VM ID.
+
+    Raises:
+        RuntimeError: If the TAP device deletion fails.
+    """
+    tap_name: str = f"tap_{vm_id.zfill(4)}_01"
+    proc: Process = await asyncio.create_subprocess_exec(
+        "ip",
+        "link",
+        "delete",
+        tap_name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        msg: str = f"Failed to delete TAP device {tap_name}: {stderr.decode().strip()}"
+        raise RuntimeError(msg)
+
+    return tap_name
+
+
+async def teardown_firewall(vm_id: str) -> None:
+    """Remove nftables rules for a given VM ID."""
+    tap_name: str = f"tap_{vm_id.zfill(4)}_01"
+    await nft("delete", "rule", "ip", "tussilago", "postrouting", "oifname", tap_name, "counter", "accept")

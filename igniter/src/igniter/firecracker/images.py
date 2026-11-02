@@ -143,7 +143,9 @@ async def validate_that_everything_is_correct(rootfs_dir: AsyncPath, extracted_r
             logger.info("Rootfs %s is a valid ext4 filesystem", rootfs_file)
         else:
             logger.error(
-                "ERROR: Rootfs %s is not a valid ext4 filesystem. e2fsck output:\n%s", rootfs_file, stderr.decode()
+                "ERROR: Rootfs %s is not a valid ext4 filesystem. e2fsck output:\n%s",
+                rootfs_file,
+                stderr.decode(),
             )
 
     # Check if the SSH key file exists

@@ -1,10 +1,7 @@
 import logging
 import os
-from ipaddress import IPv4Address
-from ipaddress import IPv4Interface
 from typing import TYPE_CHECKING
 
-from anyio import Path as AsyncPath
 from litestar import Litestar
 from litestar import delete
 from litestar import get
@@ -22,11 +19,10 @@ from igniter.firecracker.install import fetch_latest_firecracker_release
 from igniter.firecracker.ipam import AllocatedNetwork
 from igniter.firecracker.ipam import ipam
 from igniter.firecracker.manager import VMManager
-from igniter.firecracker.models import VirtualMachine
 from igniter.firecracker.settings import VM_DATA_DIR
 
 if TYPE_CHECKING:
-    from anyio._core._fileio import Path
+    from anyio import Path as AsyncPath
 
 # TODO(TheLovinator): Add support for Aarch64
 # TODO(TheLovinator): Install to /opt/tussilago/firecracker/<version> and create symlinks
@@ -51,7 +47,6 @@ class CreateVMRequest(BaseModel):
     vm_id: int = Field(..., ge=1, le=9999)
     memory_mib: int = Field(default=512, ge=128)
     vcpus: int = Field(default=1, ge=1, le=32)
-    rootfs_path: str = "/var/lib/tussilago/rootfs/ubuntu-24.04.ext4"
 
 
 @get("/")
@@ -101,21 +96,24 @@ async def create_vm(data: CreateVMRequest) -> dict[str, str]:
     """Create a VM with a random ID."""
     alloc: AllocatedNetwork = await ipam.allocate(data.vm_id)
 
-    vm: VirtualMachine = await vm_manager.create(
-        vm_id=data.vm_id,
-        rootfs=AsyncPath(data.rootfs_path),
-        memory_mib=data.memory_mib,
-        vcpus=data.vcpus,
-        host_ip=alloc.host_ip,
-        guest_ip=alloc.guest_ip,
-    )
+    try:
+        vm: str = await vm_manager.create(
+            vm_id=str(data.vm_id),
+            memory_mib=data.memory_mib,
+            vcpus=data.vcpus,
+            host_ip=alloc.host_ip,
+            guest_ip=alloc.guest_ip,
+        )
+    except BaseException:
+        await ipam.release(data.vm_id)
+        raise
 
     return {
-        "id": str(vm.id),
-        "guest_ip": str(vm.guest_ip),
-        "gateway_ip": str(vm.host_ip.ip),
-        "tap_device": vm.tap_device,
-        "unit_name": vm.unit_name,
+        "id": vm,
+        "host_ip": str(alloc.host_ip),
+        "guest_ip": str(alloc.guest_ip),
+        "tap_device": f"tap_{str(data.vm_id).zfill(4)}_01",
+        "unit_name": f"tussilago-vm-{data.vm_id}.service",
     }
 
 
@@ -126,7 +124,7 @@ async def get_vm_status(vm_id: int) -> dict[str, str | int]:
     unit_name: str = f"tussilago-vm-{vm_id}.service"
     is_running: bool = unit_name in running_units
 
-    console_log: Path = VM_DATA_DIR / str(vm_id) / "console.log"
+    console_log: AsyncPath = VM_DATA_DIR / str(vm_id) / "console.log"
     logs = ""
     if await console_log.exists():
         logs: str = await console_log.read_text(encoding="utf-8")
@@ -143,17 +141,7 @@ async def get_vm_status(vm_id: int) -> dict[str, str | int]:
 @delete("/vms/{vm_id:int}", status_code=HTTP_200_OK)
 async def delete_vm(vm_id: int) -> dict[str, str]:
     """Stop and destroy a MicroVM and release network resources."""
-    vm = VirtualMachine(
-        id=vm_id,
-        rootfs=AsyncPath("/unused"),
-        tap_device=f"tap-{vm_id}",
-        memory_mib=0,
-        vcpus=0,
-        host_ip=IPv4Interface("0.0.0.0/32"),
-        guest_ip=IPv4Address("0.0.0.0"),  # ruff: ignore[hardcoded-bind-all-interfaces]
-    )
-
-    await vm_manager.destroy(vm)
+    await vm_manager.destroy(str(vm_id))
     await ipam.release(vm_id)
 
     return {"status": "deleted", "id": str(vm_id)}

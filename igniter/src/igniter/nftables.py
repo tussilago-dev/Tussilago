@@ -36,6 +36,7 @@ async def nft(*args: str, input_data: bytes | None = None) -> str:
 async def setup_firewall(*, tap_name: str, guest_ip: str, external_interface: str) -> None:
     """Set up NAT and forwarding rules for a microVM."""
     await nft("add", "table", "ip", "tussilago")
+    logger.info("Created nftables table 'tussilago'.")
 
     await nft(
         "add",
@@ -56,6 +57,7 @@ async def setup_firewall(*, tap_name: str, guest_ip: str, external_interface: st
         ";",
         "}",
     )
+    logger.info("Created nftables chain 'postrouting' in table 'tussilago'.")
 
     await nft(
         "add",
@@ -76,6 +78,7 @@ async def setup_firewall(*, tap_name: str, guest_ip: str, external_interface: st
         ";",
         "}",
     )
+    logger.info("Created nftables chain 'forward' in table 'tussilago'.")
 
     # Allow replies to connections originating from the VM.
     await nft(
@@ -96,6 +99,7 @@ async def setup_firewall(*, tap_name: str, guest_ip: str, external_interface: st
         "established,related",
         "accept",
     )
+    logger.info("Added nftables rule to allow established/related connections from guest IP %s.", guest_ip)
 
     # Allow the VM to access the outside network.
     await nft(
@@ -116,6 +120,7 @@ async def setup_firewall(*, tap_name: str, guest_ip: str, external_interface: st
         "new,established",
         "accept",
     )
+    logger.info("Added nftables rule to allow new/established connections from guest IP %s.", guest_ip)
 
     # NAT traffic leaving the host.
     await nft(
@@ -131,6 +136,7 @@ async def setup_firewall(*, tap_name: str, guest_ip: str, external_interface: st
         external_interface,
         "masquerade",
     )
+    logger.info("Added nftables NAT rule for guest IP %s.", guest_ip)
 
 
 def _rule_matches_ip(rule: dict[str, Any], guest_ip: str) -> bool:
@@ -187,8 +193,8 @@ async def teardown_firewall(*, guest_ip: str) -> None:
                         "table": "tussilago",
                         "chain": chain,
                         "handle": handle,
-                    }
-                }
+                    },
+                },
             })
 
     if not delete_commands:

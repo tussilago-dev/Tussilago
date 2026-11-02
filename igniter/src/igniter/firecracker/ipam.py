@@ -31,7 +31,8 @@ class IPAM:
             else:
                 allocated_subnets: set[ipaddress.IPv4Network] = {alloc.network for alloc in self._allocated.values()}
                 available: ipaddress.IPv4Network | None = next(
-                    (s for s in self.subnets if s not in allocated_subnets), None
+                    (s for s in self.subnets if s not in allocated_subnets),
+                    None,
                 )
                 if not available:
                     msg = "No available /30 subnets remaining in IPAM pool."

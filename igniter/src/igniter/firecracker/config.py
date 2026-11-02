@@ -1,4 +1,7 @@
 import enum
+import json
+import logging
+import os
 from dataclasses import dataclass
 from dataclasses import field
 from typing import TYPE_CHECKING
@@ -8,6 +11,8 @@ from anyio import Path as AsyncPath
 
 if TYPE_CHECKING:
     import ipaddress
+
+logger: logging.Logger = logging.getLogger("tussilago")
 
 
 class VMRole(enum.StrEnum):
@@ -25,7 +30,7 @@ class VMBuildConfig:
     """Declarative configuration for a Firecracker microVM."""
 
     organization_id: int
-    """Unique numeric identifier of the organization that owns the VM."""
+    """Unique numeric identifier for the organization that owns the VM."""
 
     vm_id: str
     """Unique numeric identifier for the VM."""
@@ -54,11 +59,8 @@ class VMBuildConfig:
     rootfs_path: AsyncPath
     """Host path to the VM root filesystem image."""
 
-    description: str = ""
-    """Optional description of the organization."""
-
     smt: bool = False
-    """Whether to enable Simultaneous Multithreading."""
+    """Whether to enable simultaneous multithreading."""
 
     netmask: str = "255.255.255.0"
     """IPv4 subnet mask for the VM network."""
@@ -66,14 +68,8 @@ class VMBuildConfig:
     dns_ip: ipaddress.IPv4Address | None = None
     """DNS server address. Uses the network gateway when unset."""
 
-    network_rate_limiter: RateLimiterConfig | None = None
-    """Optional network bandwidth and packet-rate limiter."""
-
     persistent_data_path: AsyncPath | None = None
     """Optional path to a persistent data disk, such as PostgreSQL data."""
-
-    disk_rate_limiter: RateLimiterConfig | None = None
-    """Optional disk I/O bandwidth and IOPS limiter."""
 
     enable_vsock: bool = True
     """Whether to attach a Firecracker AF_VSOCK device."""
@@ -82,19 +78,15 @@ class VMBuildConfig:
     """Firecracker Guest CID used for vsock communication."""
 
     tap_device: str = field(init=False)
-    """Host TAP interface name, limited to Linux's 15-character interface-name limit."""
+    """Host TAP interface name."""
 
     mac_address: str = field(init=False)
-    """Deterministic MAC address derived from the VM's IPv4 address."""
+    """MAC address is created from the VM's IPv4 address."""
 
     def __post_init__(self) -> None:
-        """Derive identifiers, TAP interface names, and MAC addresses."""
-        # Linux IFNAMSIZ limit is 16 chars (including null terminator)
-        self.tap_device = f"tap{self.vm_id}"
-
-        # Generate predictable MAC: 06:00:<hex-ip-1>:<hex-ip-2>:<hex-ip-3>:<hex-ip-4>
-        hex_ip: str = ":".join(f"{b:02x}" for b in self.guest_ip.packed)
-        self.mac_address = f"06:00:{hex_ip}"
+        """Create TAP interface name and MAC address."""
+        self.tap_device = f"tap_{self.vm_id.zfill(4)}_01"
+        self.mac_address = f"06:00:{self.guest_ip.packed.hex(':')}"
 
     @property
     def vm_dir(self) -> AsyncPath:
@@ -116,8 +108,11 @@ class VMBuildConfig:
         """Host filesystem path to the declarative Firecracker configuration file."""
         return self.vm_dir / "config.json"
 
-    def build_boot_args(self) -> str:
+    def build_boot_args(self, *, debug: bool = False) -> str:
         """Generate Linux kernel command line for zero-delay boot autoconfiguration.
+
+        Args:
+            debug: Enable the serial console for kernel output and debugging.
 
         Returns:
             str: Kernel command line containing serial console parameters and
@@ -125,10 +120,31 @@ class VMBuildConfig:
         """
         dns: str = str(self.dns_ip) if self.dns_ip else str(self.gateway_ip)
 
-        return (
-            f"console=ttyS0 reboot=k panic=1 quiet "
-            f"ip={self.guest_ip}::{self.gateway_ip}:{self.netmask}:{self.name}:eth0:off:{dns}"
-        )
+        # By default, Firecracker will boot a guest microVM passing the following command line parameters to the kernel:
+        # Note that Firecracker also has pci=off as default arg if not running with --enable-pci
+        default_firecracker_args: list[str] = [
+            "reboot=k",  # shut down the guest on reboot, instead of rebooting
+            "panic=1",  # on panic, reboot after 1 second
+            "nomodule",  # disable loadable kernel module support
+            "8250.nr_uarts=0",  # disable 8250 serial interface
+            "i8042.noaux",  # do not probe the i8042 controller for an attached mouse (save boot time)
+            "i8042.nomux",  # do not probe i8042 for a multiplexing controller (save boot time)
+            "i8042.dumbkbd",  # do not attempt to control kbd state via the i8042 (save boot time)
+            "swiotlb=noforce",  # disable software bounce buffers (SWIOTLB)
+        ]
+
+        args: list[str] = default_firecracker_args.copy()
+
+        if debug:
+            args.remove("8250.nr_uarts=0")  # Enable the serial interface in development.
+            args.append("console=ttyS0")  # Enable the Firecracker serial console for kernel output.
+        else:
+            args.extend(["quiet", "loglevel=1"])
+
+        # Configure network autoconfiguration.
+        args.append(f"ip={self.guest_ip}::{self.gateway_ip}:{self.netmask}:{self.name}:eth0:off:{dns}")
+
+        return " ".join(args)
 
     def to_firecracker_dict(self) -> dict[str, Any]:
         """Convert the build configuration into Firecracker's declarative JSON schema.
@@ -154,11 +170,8 @@ class VMBuildConfig:
                 "path_on_host": str(self.rootfs_path),
                 "is_root_device": True,
                 "is_read_only": False,
-            }
+            },
         ]
-
-        if self.disk_rate_limiter:
-            drives[0]["rate_limiter"] = self.disk_rate_limiter.to_firecracker_dict()
 
         if self.persistent_data_path:
             persistent_drive: dict[str, Any] = {
@@ -167,8 +180,6 @@ class VMBuildConfig:
                 "is_root_device": False,
                 "is_read_only": False,
             }
-            if self.disk_rate_limiter:
-                persistent_drive["rate_limiter"] = self.disk_rate_limiter.to_firecracker_dict()
             drives.append(persistent_drive)
 
         config["drives"] = drives
@@ -178,10 +189,6 @@ class VMBuildConfig:
             "host_dev_name": self.tap_device,
             "guest_mac": self.mac_address,
         }
-        if self.network_rate_limiter:
-            net_iface["rx_rate_limiter"] = self.network_rate_limiter.to_firecracker_dict()
-            net_iface["tx_rate_limiter"] = self.network_rate_limiter.to_firecracker_dict()
-
         config["network-interfaces"] = [net_iface]
 
         if self.enable_vsock:
@@ -193,34 +200,36 @@ class VMBuildConfig:
         return config
 
 
-@dataclass(slots=True, frozen=True)
-class RateLimiterConfig:
-    """Token bucket rate limiter configuration for disk I/O and network traffic.
+async def write_firecracker_config(
+    config: VMBuildConfig,
+    *,
+    jailer_root: AsyncPath,
+    uid: int,
+    gid: int,
+) -> AsyncPath:
+    """_summary_.
 
-    Attributes:
-        bandwidth_bytes_per_sec (int | None): Maximum allowed bandwidth budget
-            in bytes per second. Refilled every 1000ms.
-        ops_per_sec (int | None): Maximum allowed operations budget per second
-            (IOPS or network packet rate). Refilled every 1000ms.
+    Args:
+        config (VMBuildConfig): _description_
+        jailer_root (AsyncPath): _description_
+        uid (int): _description_
+        gid (int): _description_
+
+    Returns:
+        AsyncPath: _description_
     """
+    await jailer_root.mkdir(parents=True, exist_ok=True)
 
-    bandwidth_bytes_per_sec: int | None = None
-    """Maximum allowed bandwidth budget in bytes per second."""
+    destination: AsyncPath = jailer_root / "config.json"
+    temporary: AsyncPath = jailer_root / "config.json.tmp"
 
-    ops_per_sec: int | None = None
-    """Maximum allowed operations budget per second (IOPS or packet rate)."""
+    contents: str = json.dumps(config.to_firecracker_dict(), indent=2) + "\n"
 
-    def to_firecracker_dict(self) -> dict[str, Any]:
-        """Convert rate limiter settings to the Firecracker JSON schema."""
-        result: dict[str, Any] = {}
-        if self.bandwidth_bytes_per_sec is not None:
-            result["bandwidth"] = {
-                "size": self.bandwidth_bytes_per_sec,
-                "refill_time": 1000,
-            }
-        if self.ops_per_sec:
-            result["ops"] = {
-                "size": self.ops_per_sec,
-                "refill_time": 1000,
-            }
-        return result
+    await temporary.write_text(contents, encoding="utf-8")
+    os.chown(str(temporary), uid, gid)
+    await temporary.chmod(0o400)
+    await temporary.replace(destination)
+
+    logger.info("Wrote Firecracker config to %s", destination)
+
+    return destination
