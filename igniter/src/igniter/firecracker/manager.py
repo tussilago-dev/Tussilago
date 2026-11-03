@@ -18,12 +18,10 @@ from igniter.firecracker.config import VMBuildConfig
 from igniter.firecracker.config import VMRole
 from igniter.firecracker.config import write_firecracker_config
 from igniter.firecracker.images import download_linux_kernel
-from igniter.firecracker.settings import DATA_DIR
-from igniter.firecracker.settings import FIRECRACKER_PATH
-from igniter.firecracker.settings import JAILER_PATH
-from igniter.firecracker.settings import JAILER_ROOT
+from igniter.firecracker.paths import chroot_dir
+from igniter.firecracker.paths import get_console_log
+from igniter.firecracker.paths import get_jail_socket
 from igniter.firecracker.settings import KERNEL_DIR
-from igniter.firecracker.settings import LOG_DIR
 from igniter.firecracker.settings import VM_DATA_DIR
 from igniter.networking import delete_tap
 from igniter.networking import get_default_host_interface
@@ -126,7 +124,7 @@ class VMManager:
                 member="ResetFailedUnit",
                 signature="s",
                 body=[unit_name],
-            )
+            ),
         )
 
         if reply.message_type == MessageType.ERROR:
@@ -142,7 +140,7 @@ class VMManager:
         await self.prepare_jailer(vm_id)
 
         # TODO(TheLovinator): Remove a stale socket only after confirming this VM isn't running.
-        jail_socket_path: AsyncPath = JAILER_ROOT / "firecracker" / vm_id / "root" / "run" / "firecracker.sock"
+        jail_socket_path: AsyncPath = get_jail_socket(vm_id)
         await jail_socket_path.unlink(missing_ok=True)
 
         await self.start_firecracker(vm_id)
@@ -168,14 +166,13 @@ class VMManager:
             RuntimeError: Failed to create guest rootfs.
             FileNotFoundError: If kernel was not found.
         """
-        jail_dir: AsyncPath = JAILER_ROOT / "firecracker" / vm_id / "root"
+        jail_dir: AsyncPath = chroot_dir(vm_id)
         run_dir: AsyncPath = jail_dir / "run"
         vm_dir: AsyncPath = VM_DATA_DIR / vm_id
 
         await jail_dir.mkdir(parents=True, exist_ok=True)
         await run_dir.mkdir(parents=True, exist_ok=True)
         await vm_dir.mkdir(parents=True, exist_ok=True)
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         kernel_version: str = await self.get_latest_kernel_version()
         source_kernel: AsyncPath = KERNEL_DIR / f"vmlinux-{kernel_version}"
@@ -227,7 +224,7 @@ class VMManager:
             RuntimeError: If jailer failed to create all the directories.
             FileNotFoundError: Kernel or rootfs is missing from Jailer root dir.
         """
-        jail_socket_path: AsyncPath = JAILER_ROOT / "firecracker" / vm_id / "root" / "run" / "firecracker.sock"
+        jail_socket_path: AsyncPath = get_jail_socket(vm_id)
         if await jail_socket_path.exists():
             msg = f"Firecracker socket already exists for VM {vm_id}. Is it already running?"
             raise RuntimeError(msg)
@@ -236,7 +233,7 @@ class VMManager:
             msg = "Jailer resources have not been prepared"
             raise RuntimeError(msg)
 
-        jail_dir: AsyncPath = JAILER_ROOT / "firecracker" / vm_id / "root"
+        jail_dir: AsyncPath = chroot_dir(vm_id)
         logger.info("Starting Firecracker for VM %s with Jailer root %s", vm_id, jail_dir)
 
         jail_kernel: AsyncPath = jail_dir / "vmlinux"
@@ -250,27 +247,27 @@ class VMManager:
         jailer_gid: int = self.jailer_gid(vm_id)
         jailer_uid: int = self.jailer_uid(vm_id)
         argv: list[str | int] = [
-            JAILER_PATH,
+            "/usr/local/bin/jailer",
             "--id",
             vm_id,
             "--exec-file",
-            str(FIRECRACKER_PATH),
+            "/usr/local/bin/firecracker",
             "--uid",
             str(jailer_uid),
             "--gid",
             str(jailer_gid),
             "--chroot-base-dir",
-            str(JAILER_ROOT),
+            "/srv/tussilago",
             "--",
             "--api-sock",
             "/run/firecracker.sock",  # Note: This is not /run/firecracker.sock but <JAILER_ROOT>/firecracker/<vm.id>/root/run/firecracker.sock  # ruff: ignore[line-too-long]
             "--config-file",
-            "/config.json",  # /srv/jailer/firecracker/<vm.id>/root/config.json
+            "/config.json",  # /srv/tussilago/firecracker/<vm.id>/root/config.json
         ]
 
         # TODO(TheLovinator): We should add resource limits.
         unit_name: str = f"tussilago-vm-{vm_id}.service"
-        console_log_path: AsyncPath = VM_DATA_DIR / vm_id / "console.log"
+        console_log_path: AsyncPath = get_console_log(vm_id)
 
         await self.reset_failed_unit(unit_name)
         await self.start_transient_unit(
@@ -281,7 +278,7 @@ class VMManager:
                     "ExecStart",
                     Variant(
                         "a(sasb)",
-                        [(JAILER_PATH, argv, False)],
+                        [("/usr/local/bin/jailer", argv, False)],
                     ),
                 ),
                 ("Restart", Variant("s", "no")),
@@ -359,7 +356,7 @@ class VMManager:
         Returns:
             str: Kernel version string (e.g. '6.18.51').
         """
-        kernel_dir: AsyncPath = DATA_DIR / "kernels"
+        kernel_dir: AsyncPath = KERNEL_DIR
         latest_version_file: AsyncPath = kernel_dir / "latest_version.txt"
         if not await latest_version_file.exists():
             logger.warning("Latest kernel version file not found. Downloading the latest kernel.")
@@ -524,8 +521,6 @@ class VMManager:
 
         logger.info("Creating microVM %s with %d MiB RAM and %d vCPUs", vm_id, memory_mib, vcpus)
 
-        jailer_root: AsyncPath = AsyncPath(f"/srv/jailer/firecracker/{vm_id}/root")
-
         build_config = VMBuildConfig(
             dns_ip=IPv4Address("1.1.1.1"),
             enable_vsock=True,
@@ -547,7 +542,7 @@ class VMManager:
 
         await write_firecracker_config(
             config=build_config,
-            jailer_root=jailer_root,
+            jailer_root=chroot_dir(vm_id),
             uid=20000 + int(vm_id),
             gid=20000 + int(vm_id),
         )
@@ -598,8 +593,8 @@ class VMManager:
         except Exception:
             logger.exception("Error removing nftables rules for VM %s", vm_id)
 
-        await asyncio.to_thread(shutil.rmtree, JAILER_ROOT / "firecracker" / vm_id, True)
-        logger.info("Removed Jailer root for VM %s", vm_id)
+        await asyncio.to_thread(shutil.rmtree, chroot_dir(vm_id), True)
+        logger.info("Removed chroot directory for VM %s", vm_id)
 
         await asyncio.to_thread(shutil.rmtree, VM_DATA_DIR / vm_id, True)
         logger.info("Removed VM data directory for VM %s", vm_id)

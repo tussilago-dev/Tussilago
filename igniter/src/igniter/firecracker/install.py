@@ -14,8 +14,6 @@ import httpx
 import niquests
 from anyio import Path as AsyncPath
 
-from igniter.firecracker.settings import INSTALL_DIR
-
 if TYPE_CHECKING:
     from _hashlib import HASH
 
@@ -34,7 +32,7 @@ async def extract_binary_if_available(targets: dict[str, str], tar: tarfile.TarF
     if base_name in targets:
         logger.info("Found target: %s", base_name)
         target_name: str = targets[base_name]
-        binary_dest_path: AsyncPath = AsyncPath(INSTALL_DIR / target_name)
+        binary_dest_path: AsyncPath = AsyncPath("/usr/local/bin") / target_name
 
         # Extract the binary file
         src: IO[bytes] | None = tar.extractfile(member)
@@ -73,12 +71,12 @@ async def download_binary(targets: dict[str, str], version: str, url: str, expec
 
     tar_stream.seek(0)
 
-    logger.info("Extracting binaries to %s", INSTALL_DIR)
+    logger.info("Extracting binaries to /usr/local/bin")
     with tarfile.open(fileobj=tar_stream, mode="r:gz") as tar:
         for member in tar.getmembers():
             await extract_binary_if_available(targets, tar, member)
 
-    return f"Firecracker v{version} installed to {INSTALL_DIR}"
+    return f"Firecracker v{version} installed to /usr/local/bin"
 
 
 FIRECRACKER_ASSET_PATTERN: re.Pattern[str] = re.compile(r"firecracker-v(?P<version>\d+\.\d+\.\d+)-x86_64\.tgz")
@@ -130,7 +128,7 @@ async def add_metadata(targets: dict[str, str], version: str) -> None:
         version (str): The current version.
     """
     for target_name in targets.values():
-        dest_path: AsyncPath = AsyncPath(INSTALL_DIR / target_name)
+        dest_path: AsyncPath = AsyncPath("/usr/local/bin") / target_name
         metadata_path: AsyncPath = dest_path.with_suffix(".metadata")
         metadata_content: str = f"version={version}\n"
         await metadata_path.write_text(metadata_content, encoding="utf-8")

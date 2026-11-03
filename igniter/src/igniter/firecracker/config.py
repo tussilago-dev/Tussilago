@@ -9,6 +9,7 @@ from typing import Any
 
 from anyio import Path as AsyncPath
 
+from igniter.firecracker.paths import get_jail_config
 from igniter.firecracker.settings import DEBUG
 
 if TYPE_CHECKING:
@@ -200,25 +201,25 @@ async def write_firecracker_config(
     uid: int,
     gid: int,
 ) -> AsyncPath:
-    """_summary_.
+    """Write the Firecracker configuration to a file.
 
     Args:
-        config (VMBuildConfig): _description_
-        jailer_root (AsyncPath): _description_
-        uid (int): _description_
-        gid (int): _description_
+        config (VMBuildConfig):  The configuration to write to disk.
+        jailer_root (AsyncPath): The root directory for the jailer.
+        uid (int): The user ID for file ownership.
+        gid (int): The group ID for file ownership.
 
     Returns:
-        AsyncPath: _description_
+        AsyncPath: The path to the written configuration file.
     """
     await jailer_root.mkdir(parents=True, exist_ok=True)
 
-    destination: AsyncPath = jailer_root / "config.json"
-    temporary: AsyncPath = jailer_root / "config.json.tmp"
+    destination: AsyncPath = get_jail_config(config.vm_id)
+    temporary: AsyncPath = destination.with_name(f"{destination.name}.tmp")
 
     contents: str = json.dumps(config.to_firecracker_dict(), indent=2) + "\n"
-
     await temporary.write_text(contents, encoding="utf-8")
+
     os.chown(str(temporary), uid, gid)
     await temporary.chmod(0o400)
     await temporary.replace(destination)

@@ -20,8 +20,8 @@ from igniter.firecracker.install import fetch_latest_firecracker_release
 from igniter.firecracker.ipam import AllocatedNetwork
 from igniter.firecracker.ipam import ipam
 from igniter.firecracker.manager import VMManager
-from igniter.firecracker.settings import JAILER_ROOT
-from igniter.firecracker.settings import VM_DATA_DIR
+from igniter.firecracker.paths import get_console_log
+from igniter.firecracker.paths import get_jail_config
 
 if TYPE_CHECKING:
     from anyio import Path as AsyncPath
@@ -126,25 +126,23 @@ async def get_vm_status(vm_id: int) -> dict[str, str | int]:
     unit_name: str = f"tussilago-vm-{vm_id}.service"
     is_running: bool = unit_name in running_units
 
-    console_log: AsyncPath = VM_DATA_DIR / str(vm_id) / "console.log"
+    console_log: AsyncPath = get_console_log(str(vm_id))
     logs = ""
     if await console_log.exists():
         logs: str = await console_log.read_text(encoding="utf-8")
         logs: str = "\n".join(logs.splitlines()[-20:])
 
     # Get configuration from disk if it exists, otherwise return empty values.
-    vm_dir: AsyncPath = JAILER_ROOT / "firecracker" / str(vm_id) / "root"
-    if await vm_dir.exists():
-        config_path: AsyncPath = vm_dir / "config.json"
-        if await config_path.exists():
-            config_data: str = await config_path.read_text(encoding="utf-8")
-            return {
-                "id": vm_id,
-                "running": is_running,
-                "unit_name": unit_name,
-                "latest_logs": logs,
-                "config": json.loads(config_data),
-            }
+    config_path: AsyncPath = get_jail_config(str(vm_id))
+    if await config_path.exists():
+        config_data: str = await config_path.read_text(encoding="utf-8")
+        return {
+            "id": vm_id,
+            "running": is_running,
+            "unit_name": unit_name,
+            "latest_logs": logs,
+            "config": json.loads(config_data),
+        }
 
     return {
         "id": vm_id,
