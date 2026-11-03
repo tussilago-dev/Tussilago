@@ -536,13 +536,13 @@ class VMManager:
             name=vm_id,
             netmask="",
             organization_id=1337,
-            persistent_data_path=AsyncPath(""),
+            persistent_data_path=None,
             role=VMRole.DJANGO,
             rootfs_path=AsyncPath("/rootfs.ext4"),
             smt=False,
             vcpus=vcpus,
             vm_id=vm_id,
-            vsock_cid=1336,
+            vsock_cid=int(vm_id),
         )
 
         await write_firecracker_config(
