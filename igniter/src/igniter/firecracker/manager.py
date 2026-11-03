@@ -108,6 +108,35 @@ class VMManager:
             [unit, "replace", properties, []],
         )
 
+    async def reset_failed_unit(self, unit_name: str) -> None:
+        """Reset a systemd unit's failed state.
+
+        Raises:
+            RuntimeError: If resetting the unit fails.
+        """
+        # TODO(TheLovinator): We should send the failed unit to Tussilago's logging system instead of just resetting it.
+        logger.info("Resetting failed state for systemd unit %s", unit_name)
+
+        bus: MessageBus = await self._get_bus()
+        reply: Message = await bus.call(
+            Message(
+                destination="org.freedesktop.systemd1",
+                path="/org/freedesktop/systemd1",
+                interface="org.freedesktop.systemd1.Manager",
+                member="ResetFailedUnit",
+                signature="s",
+                body=[unit_name],
+            )
+        )
+
+        if reply.message_type == MessageType.ERROR:
+            # No stale unit exists, so nothing needs resetting.
+            if reply.error_name and reply.error_name.endswith(".NoSuchUnit"):
+                return
+
+            msg: str = f"Failed to reset {unit_name}: {reply.error_name}: {reply.body}"
+            raise RuntimeError(msg)
+
     async def _configure_firecracker(self, vm_id: str, bc: VMBuildConfig) -> None:
         """Prepare, start, and configure a microVM."""
         await self.prepare_jailer(vm_id)
@@ -242,6 +271,8 @@ class VMManager:
         # TODO(TheLovinator): We should add resource limits.
         unit_name: str = f"tussilago-vm-{vm_id}.service"
         console_log_path: AsyncPath = VM_DATA_DIR / vm_id / "console.log"
+
+        await self.reset_failed_unit(unit_name)
         await self.start_transient_unit(
             unit_name,
             [
