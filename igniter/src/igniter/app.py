@@ -180,3 +180,6 @@ app = Litestar(
     [index, firecracker_install, firecracker_latest_kernel, favicon, create_vm, delete_vm, get_vm_status],
     logging_config=logging_config,
 )
+
+if app.debug:
+    os.environ["TUSSILAGO_DEBUG"] = "1"

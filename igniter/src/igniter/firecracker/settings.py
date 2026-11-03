@@ -1,3 +1,4 @@
+import os
 from typing import TYPE_CHECKING
 
 from anyio import Path as AsyncPath
@@ -20,3 +21,4 @@ KERNEL_DIR: AsyncPath = DATA_DIR / "kernels"
 CACHE_LOCATION: pathlib.Path = site_cache_path(appname="Tussilago", appauthor=False, ensure_exists=True)
 SITE_DATA_LOCATION: pathlib.Path = site_data_path(appname="Tussilago", appauthor=False, ensure_exists=True)
 INSTALL_DIR: Path = site_bin_path()
+DEBUG: bool = os.environ.get("TUSSILAGO_DEBUG", "0") == "1"

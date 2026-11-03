@@ -9,6 +9,8 @@ from typing import Any
 
 from anyio import Path as AsyncPath
 
+from igniter.firecracker.settings import DEBUG
+
 if TYPE_CHECKING:
     import ipaddress
 
@@ -99,20 +101,12 @@ class VMBuildConfig:
         return self.vm_dir / "firecracker.sock"
 
     @property
-    def vsock_uds_path(self) -> AsyncPath:
-        """Host filesystem path to the AF_VSOCK backend UNIX domain socket."""
-        return self.vm_dir / "vsock.sock"
-
-    @property
     def config_json_path(self) -> AsyncPath:
         """Host filesystem path to the declarative Firecracker configuration file."""
         return self.vm_dir / "config.json"
 
-    def build_boot_args(self, *, debug: bool = False) -> str:
+    def build_boot_args(self) -> str:
         """Generate Linux kernel command line for zero-delay boot autoconfiguration.
-
-        Args:
-            debug: Enable the serial console for kernel output and debugging.
 
         Returns:
             str: Kernel command line containing serial console parameters and
@@ -135,7 +129,7 @@ class VMBuildConfig:
 
         args: list[str] = default_firecracker_args.copy()
 
-        if debug:
+        if DEBUG:
             args.remove("8250.nr_uarts=0")  # Enable the serial interface in development.
             args.append("console=ttyS0")  # Enable the Firecracker serial console for kernel output.
         else:
@@ -173,14 +167,13 @@ class VMBuildConfig:
             },
         ]
 
-        if self.persistent_data_path:
-            persistent_drive: dict[str, Any] = {
+        if self.persistent_data_path is not None:
+            drives.append({
                 "drive_id": "data",
                 "path_on_host": str(self.persistent_data_path),
                 "is_root_device": False,
                 "is_read_only": False,
-            }
-            drives.append(persistent_drive)
+            })
 
         config["drives"] = drives
 
@@ -194,7 +187,7 @@ class VMBuildConfig:
         if self.enable_vsock:
             config["vsock"] = {
                 "guest_cid": self.vsock_cid,
-                "uds_path": str(self.vsock_uds_path),
+                "uds_path": "/vsock.sock",
             }
 
         return config
