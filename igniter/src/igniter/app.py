@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -19,6 +20,7 @@ from igniter.firecracker.install import fetch_latest_firecracker_release
 from igniter.firecracker.ipam import AllocatedNetwork
 from igniter.firecracker.ipam import ipam
 from igniter.firecracker.manager import VMManager
+from igniter.firecracker.settings import JAILER_ROOT
 from igniter.firecracker.settings import VM_DATA_DIR
 
 if TYPE_CHECKING:
@@ -129,6 +131,20 @@ async def get_vm_status(vm_id: int) -> dict[str, str | int]:
     if await console_log.exists():
         logs: str = await console_log.read_text(encoding="utf-8")
         logs: str = "\n".join(logs.splitlines()[-20:])
+
+    # Get configuration from disk if it exists, otherwise return empty values.
+    vm_dir: AsyncPath = JAILER_ROOT / "firecracker" / str(vm_id) / "root"
+    if await vm_dir.exists():
+        config_path: AsyncPath = vm_dir / "config.json"
+        if await config_path.exists():
+            config_data: str = await config_path.read_text(encoding="utf-8")
+            return {
+                "id": vm_id,
+                "running": is_running,
+                "unit_name": unit_name,
+                "latest_logs": logs,
+                "config": json.loads(config_data),
+            }
 
     return {
         "id": vm_id,
