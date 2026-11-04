@@ -38,3 +38,9 @@ def get_kernel_path(kernel_version: str) -> AsyncPath:
     """Return the path to the Firecracker kernel for a given kernel version."""
     # /var/lib/tussilago/kernels/<kernel_version>/vmlinux
     return AsyncPath("/var/lib/tussilago/kernels") / kernel_version / "vmlinux"
+
+
+def get_arch_base_image_path() -> AsyncPath:
+    """Return the path to the base Arch Linux root filesystem image."""
+    # TODO(TheLovinator): Use versioning for the base image in the future.
+    return AsyncPath("/var/lib/tussilago/rootfs/arch-base.ext4")

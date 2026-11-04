@@ -19,8 +19,11 @@ from igniter.firecracker.config import VMRole
 from igniter.firecracker.config import write_firecracker_config
 from igniter.firecracker.images import download_linux_kernel
 from igniter.firecracker.paths import chroot_dir
+from igniter.firecracker.paths import get_arch_base_image_path
 from igniter.firecracker.paths import get_console_log
 from igniter.firecracker.paths import get_jail_socket
+from igniter.firecracker.rootfs import build_base_rootfs
+from igniter.firecracker.rootfs import create_vm_rootfs
 from igniter.firecracker.settings import KERNEL_DIR
 from igniter.firecracker.settings import VM_DATA_DIR
 from igniter.networking import delete_tap
@@ -56,6 +59,21 @@ class VMManager:
     def __init__(self) -> None:
         """Initialize the VMManager with the D-Bus Message Bus."""
         self._bus: MessageBus | None = None
+        self._rootfs_lock = asyncio.Lock()
+
+    async def initialize(self) -> None:
+        """Ensure the base rootfs exists."""
+        async with self._rootfs_lock:
+            if await get_arch_base_image_path().exists():
+                return
+
+            dockerfile_path: AsyncPath = AsyncPath(__file__).parent / "rootfs.Dockerfile"
+            base_rootfs: AsyncPath = get_arch_base_image_path()
+            await build_base_rootfs(
+                dockerfile=dockerfile_path,
+                output=base_rootfs,
+                size_bytes=2 * 1024**3,
+            )
 
     async def _get_bus(self) -> MessageBus:
         if self._bus is None:
@@ -180,10 +198,10 @@ class VMManager:
             raise FileNotFoundError(source_kernel)
 
         # cp uses a reflink when supported and falls back to copying.
-        ubuntu_rootfs = "/var/lib/tussilago/rootfs/ubuntu-24.04.ext4"
+        base_rootfs: AsyncPath = get_arch_base_image_path()
         for source, destination in (
             (source_kernel, jail_dir / "vmlinux"),
-            (ubuntu_rootfs, jail_dir / "rootfs.ext4"),
+            (base_rootfs, jail_dir / "rootfs.ext4"),
         ):
             if await destination.exists():
                 continue
@@ -512,6 +530,7 @@ class VMManager:
         vm_id: str,
         host_ip: ipaddress.IPv4Interface,
         guest_ip: ipaddress.IPv4Address,
+        disk_size_gib: int = 4,
         memory_mib: int = 512,
         vcpus: int = 1,
     ) -> str:
@@ -520,6 +539,14 @@ class VMManager:
         await vm_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info("Creating microVM %s with %d MiB RAM and %d vCPUs", vm_id, memory_mib, vcpus)
+
+        rootfs_path: AsyncPath = vm_dir / "rootfs.ext4"
+
+        rootfs_path = await create_vm_rootfs(
+            base_image=get_arch_base_image_path(),
+            destination=vm_dir / "rootfs.ext4",
+            size_bytes=2 * 1024**3,
+        )
 
         build_config = VMBuildConfig(
             dns_ip=IPv4Address("1.1.1.1"),
@@ -566,6 +593,7 @@ class VMManager:
 
         except BaseException:
             logger.warning("VM %s creation failed halfway; rolling back...", vm_id)
+            await rootfs_path.unlink(missing_ok=True)
             await self.destroy(vm_id)
             raise
 

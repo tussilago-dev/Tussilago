@@ -49,6 +49,7 @@ class CreateVMRequest(BaseModel):
     vm_id: int = Field(..., ge=1, le=9999)
     memory_mib: int = Field(default=512, ge=128)
     vcpus: int = Field(default=1, ge=1, le=32)
+    disk_size_gib: int = Field(default=4, ge=2, le=100)
 
 
 @get("/")
@@ -103,6 +104,7 @@ async def create_vm(data: CreateVMRequest) -> dict[str, str]:
             vm_id=str(data.vm_id),
             memory_mib=data.memory_mib,
             vcpus=data.vcpus,
+            disk_size_gib=data.disk_size_gib,
             host_ip=alloc.host_ip,
             guest_ip=alloc.guest_ip,
         )
@@ -175,7 +177,16 @@ logging_config = LoggingConfig(
 
 
 app = Litestar(
-    [index, firecracker_install, firecracker_latest_kernel, favicon, create_vm, delete_vm, get_vm_status],
+    route_handlers=[
+        index,
+        firecracker_install,
+        firecracker_latest_kernel,
+        favicon,
+        create_vm,
+        delete_vm,
+        get_vm_status,
+    ],
+    on_startup=[vm_manager.initialize],
     logging_config=logging_config,
 )
 
