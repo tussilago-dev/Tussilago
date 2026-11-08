@@ -1,4 +1,5 @@
 import asyncio
+import asyncio.subprocess
 import ipaddress
 import logging
 import os
@@ -18,14 +19,16 @@ from igniter.firecracker.config import VMBuildConfig
 from igniter.firecracker.config import VMRole
 from igniter.firecracker.config import write_firecracker_config
 from igniter.firecracker.images import download_linux_kernel
-from igniter.firecracker.paths import chroot_dir
 from igniter.firecracker.paths import get_arch_base_image_path
+from igniter.firecracker.paths import get_chroot_dir
 from igniter.firecracker.paths import get_console_log
 from igniter.firecracker.paths import get_jail_socket
+from igniter.firecracker.paths import get_kernel_dir
+from igniter.firecracker.paths import get_kernel_path
+from igniter.firecracker.paths import get_run_dir
+from igniter.firecracker.paths import get_vm_data_dir
 from igniter.firecracker.rootfs import build_base_rootfs
 from igniter.firecracker.rootfs import create_vm_rootfs
-from igniter.firecracker.settings import KERNEL_DIR
-from igniter.firecracker.settings import VM_DATA_DIR
 from igniter.networking import delete_tap
 from igniter.networking import get_default_host_interface
 from igniter.networking import teardown_firewall
@@ -33,6 +36,8 @@ from igniter.nftables import setup_firewall
 
 if TYPE_CHECKING:
     from asyncio.subprocess import Process
+
+    from anyio._core._fileio import Path
 
 
 logger: logging.Logger = logging.getLogger("tussilago")
@@ -153,57 +158,65 @@ class VMManager:
             msg: str = f"Failed to reset {unit_name}: {reply.error_name}: {reply.body}"
             raise RuntimeError(msg)
 
-    async def _configure_firecracker(self, vm_id: str, bc: VMBuildConfig) -> None:
-        """Prepare, start, and configure a microVM."""
-        await self.prepare_jailer(vm_id)
+    async def stage_file(self, source: AsyncPath, destination: AsyncPath) -> None:
+        """Stage a file inside the Firecracker jail.
 
-        # TODO(TheLovinator): Remove a stale socket only after confirming this VM isn't running.
-        jail_socket_path: AsyncPath = get_jail_socket(vm_id)
-        await jail_socket_path.unlink(missing_ok=True)
+        Raises:
+            RuntimeError: If the file copy fails.
+        """
+        command = (
+            "cp",
+            "--reflink=auto",
+            "--sparse=always",
+            "--",
+            str(source),
+            str(destination),
+        )
+        logger.debug("Running: %s", command)
 
-        await self.start_firecracker(vm_id)
+        process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
 
-        # Wait for Firecracker socket to be created.
-        with anyio.fail_after(5.0):
-            while not await jail_socket_path.exists():  # ruff: ignore[async-busy-wait]
-                await anyio.sleep(0.05)
+        _, stderr = await process.communicate()
 
-        # TODO(TheLovinator): Check if it worked.
-        logger.info("MicroVM %s started", vm_id)
+        if process.returncode != 0:
+            await destination.unlink(missing_ok=True)
+            msg = f"Failed to stage {self}: {stderr.decode().strip()}"
+            raise RuntimeError(msg)
 
-    def jailer_uid(self, vm_id: str) -> int:
-        return 20000 + int(vm_id)
-
-    def jailer_gid(self, vm_id: str) -> int:
-        return self.jailer_uid(vm_id)
-
-    async def prepare_jailer(self, vm_id: str) -> None:
+    async def prepare_jailer(self, vm_id: int) -> None:
         """Stage an immutable kernel and a private writable rootfs.
 
         Raises:
             RuntimeError: Failed to create guest rootfs.
             FileNotFoundError: If kernel was not found.
         """
-        jail_dir: AsyncPath = chroot_dir(vm_id)
-        run_dir: AsyncPath = jail_dir / "run"
-        vm_dir: AsyncPath = VM_DATA_DIR / vm_id
-
-        await jail_dir.mkdir(parents=True, exist_ok=True)
+        run_dir: AsyncPath = get_run_dir(vm_id)
         await run_dir.mkdir(parents=True, exist_ok=True)
+
+        vm_dir: AsyncPath = get_vm_data_dir(vm_id)
         await vm_dir.mkdir(parents=True, exist_ok=True)
 
         kernel_version: str = await self.get_latest_kernel_version()
-        source_kernel: AsyncPath = KERNEL_DIR / f"vmlinux-{kernel_version}"
+        source_kernel: AsyncPath = get_kernel_path(kernel_version=kernel_version)
+
         if not await source_kernel.is_file():
             raise FileNotFoundError(source_kernel)
 
-        # cp uses a reflink when supported and falls back to copying.
+        jail_dir: AsyncPath = get_chroot_dir(vm_id)
+        await jail_dir.mkdir(parents=True, exist_ok=True)
+
         base_rootfs: AsyncPath = get_arch_base_image_path()
         for source, destination in (
             (source_kernel, jail_dir / "vmlinux"),
             (base_rootfs, jail_dir / "rootfs.ext4"),
         ):
             if await destination.exists():
+                logger.warning("Destination %s already exists, skipping copy", destination)
                 continue
 
             process: Process = await asyncio.create_subprocess_exec(
@@ -223,19 +236,17 @@ class VMManager:
                 raise RuntimeError(msg)
 
         # The jailer runs privileged initially, then drops to this VM's UID/GID.
-        jailer_gid: int = self.jailer_gid(vm_id)
-        jailer_uid: int = self.jailer_uid(vm_id=vm_id)
-        os.chown(run_dir, uid=jailer_uid, gid=jailer_gid)
+        os.chown(run_dir, uid=vm_id, gid=vm_id)
         await AsyncPath(run_dir).chmod(0o700)
 
-        os.chown(jail_dir / "vmlinux", uid=jailer_uid, gid=jailer_gid)
+        os.chown(jail_dir / "vmlinux", uid=vm_id, gid=vm_id)
         await AsyncPath(jail_dir / "vmlinux").chmod(0o400)
 
         rootfs: AsyncPath = jail_dir / "rootfs.ext4"
-        os.chown(rootfs, uid=jailer_uid, gid=jailer_gid)
+        os.chown(rootfs, uid=vm_id, gid=vm_id)
         await AsyncPath(rootfs).chmod(0o600)
 
-    async def start_firecracker(self, vm_id: str) -> None:
+    async def start_firecracker(self, vm_id: int) -> None:
         """Start Jailer as a systemd-supervised process.
 
         Raises:
@@ -251,7 +262,7 @@ class VMManager:
             msg = "Jailer resources have not been prepared"
             raise RuntimeError(msg)
 
-        jail_dir: AsyncPath = chroot_dir(vm_id)
+        jail_dir: AsyncPath = get_chroot_dir(vm_id)
         logger.info("Starting Firecracker for VM %s with Jailer root %s", vm_id, jail_dir)
 
         jail_kernel: AsyncPath = jail_dir / "vmlinux"
@@ -262,25 +273,23 @@ class VMManager:
 
         # argv[0] must be the executable path. Firecracker options follow "--"
         # and their file paths are interpreted from inside the chroot.
-        jailer_gid: int = self.jailer_gid(vm_id)
-        jailer_uid: int = self.jailer_uid(vm_id)
-        argv: list[str | int] = [
+        argv: list[str] = [
             "/usr/local/bin/jailer",
             "--id",
-            vm_id,
+            str(vm_id),
             "--exec-file",
             "/usr/local/bin/firecracker",
             "--uid",
-            str(jailer_uid),
+            str(vm_id),
             "--gid",
-            str(jailer_gid),
+            str(vm_id),
             "--chroot-base-dir",
             "/srv/tussilago",
             "--",
             "--api-sock",
             "/run/firecracker.sock",  # Note: This is not /run/firecracker.sock but <JAILER_ROOT>/firecracker/<vm.id>/root/run/firecracker.sock  # ruff: ignore[line-too-long]
             "--config-file",
-            "/config.json",  # /srv/tussilago/firecracker/<vm.id>/root/config.json
+            "/config.json",  # And this one is at /srv/tussilago/firecracker/<vm.id>/root/config.json
         ]
 
         # TODO(TheLovinator): We should add resource limits.
@@ -343,7 +352,7 @@ class VMManager:
         logger.info("Found %d running Tussilago VMs: %s", len(running), running)
         return running
 
-    async def stop_firecracker(self, vm_id: str) -> None:
+    async def stop_firecracker(self, vm_id: int) -> None:
         """Stop the systemd unit supervising this VM.
 
         Raises:
@@ -374,7 +383,7 @@ class VMManager:
         Returns:
             str: Kernel version string (e.g. '6.18.51').
         """
-        kernel_dir: AsyncPath = KERNEL_DIR
+        kernel_dir: AsyncPath = get_kernel_dir()
         latest_version_file: AsyncPath = kernel_dir / "latest_version.txt"
         if not await latest_version_file.exists():
             logger.warning("Latest kernel version file not found. Downloading the latest kernel.")
@@ -524,28 +533,33 @@ class VMManager:
             raise RuntimeError(msg)
         logger.info("Added outbound NAT rule via %s", host_iface)
 
+    async def verify_tap_device(self, build_config: VMBuildConfig, host_ip: ipaddress.IPv4Interface) -> None:
+        if not await (AsyncPath("/sys/class/net")).joinpath(build_config.tap_device).exists():
+            await self.setup_network_interface(
+                tap_device=build_config.tap_device,
+                tap_ip=str(host_ip),
+            )
+
     async def create(
         self,
         *,
-        vm_id: str,
+        vm_id: int,
         host_ip: ipaddress.IPv4Interface,
         guest_ip: ipaddress.IPv4Address,
         disk_size_gib: int = 4,
         memory_mib: int = 512,
         vcpus: int = 1,
-    ) -> str:
+    ) -> int:
         """Create and start a microVM, rolling back on failure."""
-        vm_dir: AsyncPath = VM_DATA_DIR / vm_id
-        await vm_dir.mkdir(parents=True, exist_ok=True)
-
         logger.info("Creating microVM %s with %d MiB RAM and %d vCPUs", vm_id, memory_mib, vcpus)
 
-        rootfs_path: AsyncPath = vm_dir / "rootfs.ext4"
+        vm_dir: AsyncPath = get_vm_data_dir(vm_id=vm_id)
+        await vm_dir.mkdir(parents=True, exist_ok=True)
 
-        rootfs_path = await create_vm_rootfs(
+        rootfs_path: Path = await create_vm_rootfs(
             base_image=get_arch_base_image_path(),
             destination=vm_dir / "rootfs.ext4",
-            size_bytes=2 * 1024**3,
+            size_bytes=disk_size_gib * 1024**3,
         )
 
         build_config = VMBuildConfig(
@@ -555,7 +569,7 @@ class VMManager:
             guest_ip=guest_ip,
             kernel_path=AsyncPath("/vmlinux"),
             memory_mib=memory_mib,
-            name=vm_id,
+            name=f"test-vm-for-{vm_id}",
             netmask="",
             organization_id=1337,
             persistent_data_path=None,
@@ -564,22 +578,11 @@ class VMManager:
             smt=False,
             vcpus=vcpus,
             vm_id=vm_id,
-            vsock_cid=int(vm_id),
+            vsock_cid=vm_id,
         )
 
-        await write_firecracker_config(
-            config=build_config,
-            jailer_root=chroot_dir(vm_id),
-            uid=20000 + int(vm_id),
-            gid=20000 + int(vm_id),
-        )
-
-        # Verify that the TAP device is created and configured before starting the VM
-        if not await (AsyncPath("/sys/class/net")).joinpath(build_config.tap_device).exists():
-            await self.setup_network_interface(
-                tap_device=build_config.tap_device,
-                tap_ip=str(host_ip),
-            )
+        await write_firecracker_config(config=build_config, jailer_root=get_chroot_dir(vm_id))
+        await self.verify_tap_device(build_config=build_config, host_ip=host_ip)
 
         try:
             host_iface: str = await get_default_host_interface()
@@ -597,14 +600,26 @@ class VMManager:
             await self.destroy(vm_id)
             raise
 
-        # Start the microVM after setting up the network and firewall
-        await self._configure_firecracker(vm_id, build_config)
+        await self.prepare_jailer(vm_id)
 
+        # TODO(TheLovinator): Remove a stale socket only after confirming this VM isn't running.
+        jail_socket_path: AsyncPath = get_jail_socket(vm_id)
+        await jail_socket_path.unlink(missing_ok=True)
+
+        await self.start_firecracker(vm_id)
+
+        # Wait for Firecracker socket to be created.
+        with anyio.fail_after(5.0):
+            while not await jail_socket_path.exists():  # ruff: ignore[async-busy-wait]
+                await anyio.sleep(0.05)
+
+        # TODO(TheLovinator): Check if it worked.
+        logger.info("MicroVM %s started", vm_id)
         logger.info("Successfully created and started microVM %s", vm_id)
 
         return vm_id
 
-    async def destroy(self, vm_id: str) -> None:
+    async def destroy(self, vm_id: int) -> None:
         """Stop a VM and remove its ephemeral resources."""
         try:
             await self.stop_firecracker(vm_id)
@@ -621,10 +636,11 @@ class VMManager:
         except Exception:
             logger.exception("Error removing nftables rules for VM %s", vm_id)
 
-        await asyncio.to_thread(shutil.rmtree, chroot_dir(vm_id), True)
+        await asyncio.to_thread(shutil.rmtree, get_chroot_dir(vm_id), True)
         logger.info("Removed chroot directory for VM %s", vm_id)
 
-        await asyncio.to_thread(shutil.rmtree, VM_DATA_DIR / vm_id, True)
-        logger.info("Removed VM data directory for VM %s", vm_id)
+        vm_data_dir: AsyncPath = get_vm_data_dir(vm_id)
+        await asyncio.to_thread(shutil.rmtree, vm_data_dir, True)
 
+        logger.info("Removed VM data directory for VM %s", vm_id)
         logger.info("Successfully cleaned up all resources for VM %s", vm_id)

@@ -16,6 +16,7 @@
         "niquests",
         "platformdirs",
         "POSTROUTING",
+        "pwasyncio",
         "pycodestyle",
         "pydocstyle",
         "rawdogging",

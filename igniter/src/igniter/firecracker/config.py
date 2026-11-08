@@ -7,13 +7,13 @@ from dataclasses import field
 from typing import TYPE_CHECKING
 from typing import Any
 
-from anyio import Path as AsyncPath
-
 from igniter.firecracker.paths import get_jail_config
-from igniter.firecracker.settings import DEBUG
+from igniter.settings import DEBUG
 
 if TYPE_CHECKING:
     import ipaddress
+
+    from anyio import Path as AsyncPath
 
 logger: logging.Logger = logging.getLogger("tussilago")
 
@@ -35,7 +35,7 @@ class VMBuildConfig:
     organization_id: int
     """Unique numeric identifier for the organization that owns the VM."""
 
-    vm_id: str
+    vm_id: int
     """Unique numeric identifier for the VM."""
 
     name: str
@@ -88,23 +88,8 @@ class VMBuildConfig:
 
     def __post_init__(self) -> None:
         """Create TAP interface name and MAC address."""
-        self.tap_device = f"tap_{self.vm_id.zfill(4)}_01"
+        self.tap_device = f"tap_{self.vm_id:04d}_01"  # TODO(TheLovinator): Get the actual TAP device name
         self.mac_address = f"06:00:{self.guest_ip.packed.hex(':')}"
-
-    @property
-    def vm_dir(self) -> AsyncPath:
-        """Directory containing the VM's runtime state and sockets."""
-        return AsyncPath(f"/var/lib/tussilago/organizations/{self.organization_id}/vms/{self.vm_id}")
-
-    @property
-    def socket_path(self) -> AsyncPath:
-        """Host filesystem path to the Firecracker management UNIX domain socket."""
-        return self.vm_dir / "firecracker.sock"
-
-    @property
-    def config_json_path(self) -> AsyncPath:
-        """Host filesystem path to the declarative Firecracker configuration file."""
-        return self.vm_dir / "config.json"
 
     def build_boot_args(self) -> str:
         """Generate Linux kernel command line for zero-delay boot autoconfiguration.
@@ -136,8 +121,9 @@ class VMBuildConfig:
         else:
             args.extend(["quiet", "loglevel=1"])
 
-        # Configure network autoconfiguration.
-        args.append(f"ip={self.guest_ip}::{self.gateway_ip}:{self.netmask}:{self.name}:eth0:off:{dns}")
+        # Configure network
+        hostname: str = f"{self.name}.tussilago.internal"
+        args.append(f"ip={self.guest_ip}::{self.gateway_ip}:{self.netmask}:{hostname}:eth0:off:{dns}")
 
         return " ".join(args)
 
@@ -194,20 +180,12 @@ class VMBuildConfig:
         return config
 
 
-async def write_firecracker_config(
-    config: VMBuildConfig,
-    *,
-    jailer_root: AsyncPath,
-    uid: int,
-    gid: int,
-) -> AsyncPath:
+async def write_firecracker_config(config: VMBuildConfig, *, jailer_root: AsyncPath) -> AsyncPath:
     """Write the Firecracker configuration to a file.
 
     Args:
         config (VMBuildConfig):  The configuration to write to disk.
         jailer_root (AsyncPath): The root directory for the jailer.
-        uid (int): The user ID for file ownership.
-        gid (int): The group ID for file ownership.
 
     Returns:
         AsyncPath: The path to the written configuration file.
@@ -220,7 +198,7 @@ async def write_firecracker_config(
     contents: str = json.dumps(config.to_firecracker_dict(), indent=2) + "\n"
     await temporary.write_text(contents, encoding="utf-8")
 
-    os.chown(str(temporary), uid, gid)
+    os.chown(str(temporary), config.vm_id, config.vm_id)
     await temporary.chmod(0o400)
     await temporary.replace(destination)
 

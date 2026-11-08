@@ -52,13 +52,13 @@ def generate_mac_from_ip(guest_ip: ipaddress.IPv4Address) -> str:
     return f"06:00:{hex_ip}"
 
 
-async def delete_tap(vm_id: str) -> str:
+async def delete_tap(vm_id: int) -> str:
     """Delete a TAP device for a given VM ID.
 
     Raises:
         RuntimeError: If the TAP device deletion fails.
     """
-    tap_name: str = f"tap_{vm_id.zfill(4)}_01"
+    tap_name: str = f"tap_{vm_id:04d}_01"  # TODO(TheLovinator): Get the actual TAP device name
     proc: Process = await asyncio.create_subprocess_exec(
         "ip",
         "link",
@@ -75,7 +75,7 @@ async def delete_tap(vm_id: str) -> str:
     return tap_name
 
 
-async def teardown_firewall(vm_id: str) -> None:
+async def teardown_firewall(vm_id: int) -> None:
     """Remove nftables rules for a given VM ID."""
-    tap_name: str = f"tap_{vm_id.zfill(4)}_01"
+    tap_name: str = f"tap_{vm_id:04d}_01"  # TODO(TheLovinator): Get the actual TAP device name
     await nft("delete", "rule", "ip", "tussilago", "postrouting", "oifname", tap_name, "counter", "accept")

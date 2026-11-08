@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import niquests
 from natsort import natsorted
 
-from igniter.firecracker.settings import DATA_DIR
+from igniter.firecracker.paths import get_kernel_dir
 
 if TYPE_CHECKING:
     from anyio import Path as AsyncPath
@@ -45,7 +45,7 @@ async def save_kernel_to_disk(session: niquests.AsyncSession, latest_kernel_key:
 
     # Save the vmlinux file to /var/lib/tussilago/kernels/vmlinux-{version}
     # TODO(TheLovinator): Should it be configurable?
-    kernel_dir: AsyncPath = DATA_DIR / "kernels"
+    kernel_dir: AsyncPath = get_kernel_dir()
     await kernel_dir.mkdir(parents=True, exist_ok=True)
 
     # /var/lib/tussilago/kernels/vmlinux-6.18.51
