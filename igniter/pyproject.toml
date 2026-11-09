@@ -16,7 +16,9 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["debugpy>=1.8.22"]
+dev = [
+    "debugpy>=1.8.22",
+]
 
 [project.scripts]
 igniter = "igniter:main"
@@ -90,7 +92,3 @@ lint.ignore = [
     "magic-value-comparison",
     "import-private-name",
 ]
-
-[tool.pyrefly]
-project-includes = ["**/*.py*"]
-preset = "strict"

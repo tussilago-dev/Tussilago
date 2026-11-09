@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -14,6 +15,8 @@ from litestar.status_codes import HTTP_200_OK
 from pydantic import BaseModel
 from pydantic import Field
 
+from igniter.database import close_database
+from igniter.database import setup_database
 from igniter.firecracker.images import download_linux_kernel
 from igniter.firecracker.install import LatestFirecrackerRelease
 from igniter.firecracker.install import add_metadata
@@ -180,8 +183,14 @@ logging_config = LoggingConfig(
 
 
 async def on_startup() -> None:
-    """Download rootfs and kernel if they don't exist, and initialize the VM manager."""
-    await vm_manager.initialize()
+    """Downloads rootfs/kernel and set up the database."""
+    logger.info("Starting initialization...")
+
+    await asyncio.gather(
+        setup_database(),
+        vm_manager.download_assets(),
+    )
+    logger.info("Igniter is ready.")
 
 
 app = Litestar(
@@ -195,6 +204,7 @@ app = Litestar(
         get_vm_status,
     ],
     on_startup=[on_startup],
+    on_shutdown=[close_database],
     logging_config=logging_config,
 )
 

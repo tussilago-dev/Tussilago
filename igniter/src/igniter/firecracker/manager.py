@@ -66,7 +66,7 @@ class VMManager:
         self._bus: MessageBus | None = None
         self._rootfs_lock = asyncio.Lock()
 
-    async def initialize(self) -> None:
+    async def download_assets(self) -> None:
         """Ensure the base rootfs exists."""
         async with self._rootfs_lock:
             if await get_arch_base_image_path().exists():
